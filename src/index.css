@@ -1,0 +1,81 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: 'JetBrains Mono', 'Inter', system-ui, -apple-system, sans-serif;
+}
+
+html, body, #root {
+  height: 100vh;
+  width: 100vw;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+body {
+  background-color: #1e1e1e;
+  color: #cccccc;
+  -webkit-font-smoothing: antialiased;
+}
+
+#root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+/* IMPROVED RESIZE HANDLES */
+.resize-handle-horizontal {
+  width: 6px !important;
+  background-color: #111 !important;
+  border-left: 1px solid #333;
+  border-right: 1px solid #333;
+  cursor: col-resize;
+  transition: background-color 0.2s;
+  z-index: 50;
+  position: relative;
+  flex: 0 0 6px !important;
+}
+
+.resize-handle-horizontal:hover,
+.resize-handle-horizontal[data-panel-resize-handle-active="true"] {
+  background-color: #007acc !important;
+  border-color: #007acc;
+}
+
+.resize-handle-vertical {
+  height: 6px !important;
+  background-color: #111 !important;
+  border-top: 1px solid #333;
+  border-bottom: 1px solid #333;
+  cursor: row-resize;
+  transition: background-color 0.2s;
+  z-index: 50;
+  position: relative;
+  flex: 0 0 6px !important;
+}
+
+.resize-handle-vertical:hover,
+.resize-handle-vertical[data-panel-resize-handle-active="true"] {
+  background-color: #007acc !important;
+  border-color: #007acc;
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #333;
+  border-radius: 3px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #444;
+}
+
+.monaco-editor {
+  padding-top: 8px;
+}
