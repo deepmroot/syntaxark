@@ -32,3 +32,9 @@ jobs:
 
       - name: Build
         run: npm run -s build
+
+      - name: Production auth smoke (optional)
+        if: ${{ vars.PROD_CONVEX_SITE_URL != '' }}
+        env:
+          SMOKE_CONVEX_SITE_URL: ${{ vars.PROD_CONVEX_SITE_URL }}
+        run: npm run -s smoke:prod-auth
