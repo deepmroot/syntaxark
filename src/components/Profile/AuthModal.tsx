@@ -34,6 +34,7 @@ export const AuthModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [oauthLoadingProvider, setOauthLoadingProvider] = useState<'google' | 'github' | null>(null);
 
   const [usernameValid, setUsernameValid] = useState<boolean | null>(null);
   const [emailValid, setEmailValid] = useState<boolean | null>(null);
@@ -67,6 +68,24 @@ export const AuthModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   useEffect(() => {
     setPasswordValid(password.length === 0 ? null : password.length >= 6);
   }, [password]);
+
+  const handleOAuthSignIn = async (provider: 'google' | 'github') => {
+    setError('');
+    setOauthLoadingProvider(provider);
+    try {
+      await signIn(provider);
+    } catch (oauthError) {
+      const message =
+        oauthError instanceof Error
+          ? oauthError.message
+          : 'OAuth sign-in failed before redirect.';
+      setError(
+        `OAuth ${provider} sign-in failed. ${message} Check CONVEX_SITE_URL + SITE_URL in Convex and OAuth callback URLs in provider settings.`
+      );
+    } finally {
+      setOauthLoadingProvider(null);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -144,16 +163,24 @@ export const AuthModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
           {/* OAuth - High Contrast */}
           <div className="grid grid-cols-2 gap-3 mb-6">
             <button 
-              onClick={() => signIn("google")}
+              type="button"
+              onClick={() => {
+                void handleOAuthSignIn('google');
+              }}
+              disabled={Boolean(oauthLoadingProvider)}
               className="h-11 rounded-xl bg-white/5 border border-white/5 text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-3 hover:bg-white/10 hover:border-white/10 transition-all active:scale-95"
             >
-              <GoogleIcon /> Google
+              {oauthLoadingProvider === 'google' ? <Loader2 size={14} className="animate-spin" /> : <GoogleIcon />} Google
             </button>
             <button 
-              onClick={() => signIn("github")}
+              type="button"
+              onClick={() => {
+                void handleOAuthSignIn('github');
+              }}
+              disabled={Boolean(oauthLoadingProvider)}
               className="h-11 rounded-xl bg-white/5 border border-white/5 text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-3 hover:bg-white/10 hover:border-white/10 transition-all active:scale-95"
             >
-              <GitHubIcon /> GitHub
+              {oauthLoadingProvider === 'github' ? <Loader2 size={14} className="animate-spin" /> : <GitHubIcon />} GitHub
             </button>
           </div>
 
