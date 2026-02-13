@@ -2,9 +2,11 @@ import React, { useState } from 'react';
 import { useAuth } from '../../store/useAuth';
 import { useEditor } from '../../store/useEditor';
 import { X, Crown, Camera, Zap, Trophy, Flame, Users, LogOut, Edit2 } from 'lucide-react';
+import { useAuthActions } from "@convex-dev/auth/react";
 
 export const UserProfileModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const { user, updateProfile, upgradeToPro, logout } = useAuth();
+  const { signOut } = useAuthActions();
   const { theme } = useEditor();
   const isDark = theme === 'vs-dark';
   
@@ -24,6 +26,17 @@ export const UserProfileModal: React.FC<{ onClose: () => void }> = ({ onClose })
     if (confirmed) {
       upgradeToPro();
       alert("Welcome to Pro! Cloud sync enabled.");
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await signOut();
+    } catch {
+      // local logout still runs for non-convex sessions
+    } finally {
+      logout();
+      onClose();
     }
   };
 
@@ -138,7 +151,7 @@ export const UserProfileModal: React.FC<{ onClose: () => void }> = ({ onClose })
           {/* Settings / Danger Zone */}
           <div className={`pt-6 border-t ${isDark ? 'border-[#333]' : 'border-gray-200'}`}>
             <button 
-              onClick={() => { logout(); onClose(); }}
+              onClick={() => { void handleLogout(); }}
               className="flex items-center gap-2 text-xs font-bold text-red-500 hover:text-red-400 transition-colors"
             >
               <LogOut size={14} /> Log Out
