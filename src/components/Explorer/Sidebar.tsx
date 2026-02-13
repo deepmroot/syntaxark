@@ -126,7 +126,7 @@ const TreeItem: React.FC<TreeItemProps> = ({
         onDoubleClick={(e) => { e.stopPropagation(); startRenaming(); }}
         style={{ paddingLeft: `${depth * 12 + 16}px` }}
         className={`
-          group flex items-center h-8 cursor-pointer text-[11px] font-bold uppercase tracking-wider transition-all border-l-2
+          group flex items-center h-8 cursor-pointer text-[11px] font-bold tracking-wider transition-all border-l-2
           ${isSelected
             ? 'bg-blue-500/10 text-white border-blue-500'
             : isActive
@@ -167,7 +167,7 @@ const TreeItem: React.FC<TreeItemProps> = ({
           {isRenaming ? (
             <input
               autoFocus
-              className="flex-1 min-w-0 bg-black/40 border border-blue-500/50 outline-none text-[10px] px-2 h-6 rounded-lg text-white font-bold uppercase"
+              className="flex-1 min-w-0 bg-black/40 border border-blue-500/50 outline-none text-[10px] px-2 h-6 rounded-lg text-white font-bold"
               value={renameValue}
               onChange={(e) => setRenameValue(e.target.value)}
               onKeyDown={(e) => {
@@ -210,7 +210,7 @@ const TreeItem: React.FC<TreeItemProps> = ({
         <div style={{ paddingLeft: `${(depth + 1) * 12 + 16}px` }} className="py-2 pr-4 relative animate-in slide-in-from-left-2">
           <input
             autoFocus
-            className="ethereal-input w-full h-8 px-3 text-[10px] font-black uppercase tracking-widest"
+            className="ethereal-input w-full h-8 px-3 text-[10px] font-black tracking-widest"
             value={newName}
             onChange={(e) => setNewName(e.target.value)}
             onKeyDown={(e) => {
@@ -234,7 +234,7 @@ const TreeItem: React.FC<TreeItemProps> = ({
                 <button
                   key={suggestion.ext}
                   type="button"
-                  className={`w-full text-left px-3 py-2 text-[10px] font-bold uppercase tracking-wider hover:bg-white/5 flex items-center justify-between transition-colors ${idx === 0 ? 'text-blue-400' : 'text-gray-500'}`}
+              className={`w-full text-left px-3 py-2 text-[10px] font-bold tracking-wider hover:bg-white/5 flex items-center justify-between transition-colors ${idx === 0 ? 'text-blue-400' : 'text-gray-500'}`}
                   onMouseDown={(e) => {
                     e.preventDefault();
                     setNewName((prev) => applyExtensionSuggestion(prev, suggestion.ext));
@@ -381,7 +381,7 @@ export const Sidebar: React.FC = () => {
             <div className="flex items-center gap-1 animate-in fade-in slide-in-from-right-2">
               <button
                 onClick={selectAllNodes}
-                className="px-2 py-1 hover:bg-white/5 rounded-lg text-[9px] font-black uppercase text-gray-500 hover:text-white transition-all"
+                          className="px-2 py-1 hover:bg-white/5 rounded-lg text-[9px] font-black text-gray-500 hover:text-white transition-all"
               >
                 All
               </button>
@@ -433,7 +433,7 @@ export const Sidebar: React.FC = () => {
                   onClick={() => {
                     if (node.type === 'file') setActiveFile(node.id);
                   }}
-                  className="w-full text-left px-4 py-2 rounded-xl hover:bg-white/5 flex items-center gap-3 text-[11px] font-bold uppercase tracking-wider text-gray-500 hover:text-gray-300 transition-all border border-transparent hover:border-white/5"
+                        className="w-full text-left px-4 py-2 rounded-xl hover:bg-white/5 flex items-center gap-3 text-[11px] font-bold tracking-wider text-gray-500 hover:text-gray-300 transition-all border border-transparent hover:border-white/5"
                 >
                   <FileIcon name={node.name} size={14} />
                   <span className="truncate">{node.name}</span>
@@ -445,10 +445,10 @@ export const Sidebar: React.FC = () => {
         {isCreatingRoot && (
           <div className="px-4 py-2 relative animate-in slide-in-from-left-2">
             <input
-              autoFocus
-              className="ethereal-input w-full h-9 px-4 text-[10px] font-black tracking-widest uppercase border-blue-500/50 shadow-[0_0_15px_rgba(59,130,246,0.1)]"
-              value={newName}
-              onChange={(e) => setNewName(e.target.value)}
+                autoFocus
+                className="ethereal-input w-full h-9 px-4 text-[10px] font-black tracking-widest border-blue-500/50 shadow-[0_0_15px_rgba(59,130,246,0.1)]"
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === 'Tab' && rootCreateSuggestions.length > 0) {
                   e.preventDefault();
@@ -470,7 +470,7 @@ export const Sidebar: React.FC = () => {
                   <button
                     key={suggestion.ext}
                     type="button"
-                    className={`w-full text-left px-3 py-2 text-[10px] font-bold uppercase tracking-wider hover:bg-white/5 flex items-center justify-between transition-colors ${idx === 0 ? 'text-blue-400' : 'text-gray-500'}`}
+                    className={`w-full text-left px-3 py-2 text-[10px] font-bold tracking-wider hover:bg-white/5 flex items-center justify-between transition-colors ${idx === 0 ? 'text-blue-400' : 'text-gray-500'}`}
                     onMouseDown={(e) => {
                       e.preventDefault();
                       setNewName((prev) => applyExtensionSuggestion(prev, suggestion.ext));
