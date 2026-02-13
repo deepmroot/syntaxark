@@ -6,7 +6,8 @@ import { ConvexReactClient } from "convex/react";
 import { ConvexAuthProvider } from "@convex-dev/auth/react";
 
 const rootEl = document.getElementById('root');
-const convexUrl = import.meta.env.VITE_CONVEX_URL as string | undefined;
+const convexUrlRaw = import.meta.env.VITE_CONVEX_URL as string | undefined;
+const convexUrl = convexUrlRaw?.trim().replace(/\/+$/, "");
 
 if (!rootEl) {
   throw new Error('Missing root element');
@@ -32,4 +33,3 @@ createRoot(rootEl).render(
     </ConvexAuthProvider>
   </StrictMode>,
 )
-
