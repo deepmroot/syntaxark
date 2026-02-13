@@ -42,19 +42,36 @@ export const MainLayout: React.FC = () => {
   const [fullscreenDrawing, setFullscreenDrawing] = useState(false);
   const [showShareModal, setShowShareModal] = useState(false);
   const [copyFeedback, setCopyFeedback] = useState('');
-  const [, setConsoleSizePct] = useState(30);
+  const [consoleSizePct, setConsoleSizePct] = useState(30);
   const consolePanelRef = useRef<PanelImperativeHandle>(null);
 
   const isDark = theme === 'vs-dark';
-  const ensureConsoleVisible = () => {
-    const p = consolePanelRef.current;
-    if (p) {
-      p.resize(30);
-      setShowConsole(true);
-      setConsoleSizePct(30);
+  const handleConsoleResize = (size: { asPercentage: number }) => {
+    const pct = size.asPercentage;
+    if (pct <= 0.5) {
+      setShowConsole(false);
       return;
     }
     setShowConsole(true);
+    setConsoleSizePct(pct);
+  };
+  const openConsolePanel = () => {
+    const p = consolePanelRef.current;
+    if (!p) {
+      setShowConsole(true);
+      return;
+    }
+    p.expand();
+    p.resize(Math.max(consoleSizePct, 20));
+  };
+  const toggleConsolePanel = () => {
+    const p = consolePanelRef.current;
+    if (!p) {
+      setShowConsole(s => !s);
+      return;
+    }
+    if (p.isCollapsed()) p.expand();
+    else p.collapse();
   };
 
   useEffect(() => {
@@ -227,7 +244,6 @@ export const MainLayout: React.FC = () => {
 
   const handleRun = async () => {
     if (!activeFileId) return;
-    ensureConsoleVisible();
     clearLogs();
     setTestResults(null);
     setPreviewCode(null);
@@ -250,7 +266,6 @@ export const MainLayout: React.FC = () => {
 
   const handleRunTests = async () => {
     if (!activeFileId || !activeNode || !activeChallenge) return;
-    ensureConsoleVisible();
     if (!activeChallenge.functionName || !activeChallenge.testCases.length) {
       addLog('warn', ['This challenge does not have executable test cases yet.']);
       return;
@@ -391,25 +406,13 @@ export const MainLayout: React.FC = () => {
       if (ctrl && key === '`') {
         e.preventDefault();
         e.stopPropagation();
-        const p = consolePanelRef.current;
-        if (p) {
-          if (p.isCollapsed()) p.expand();
-          else p.collapse();
-        } else {
-          setShowConsole(s => !s);
-        }
+        toggleConsolePanel();
         return;
       }
       if (ctrl && key.toLowerCase() === 't' && !shift) {
         e.preventDefault();
         e.stopPropagation();
-        const p = consolePanelRef.current;
-        if (p) {
-          if (p.isCollapsed()) p.expand();
-          else p.collapse();
-        } else {
-          setShowConsole(s => !s);
-        }
+        toggleConsolePanel();
         return;
       }
       if (key === 'Escape') { setShowShortcuts(false); setShowDownloadMenu(false); setShowShareModal(false); if (fullscreenDrawing) setFullscreenDrawing(false); }
@@ -680,7 +683,7 @@ export const MainLayout: React.FC = () => {
                        <div className="flex-1 min-h-0"><EditorContainer /></div>
                        {!showConsole && (
                          <button
-                           onClick={() => consolePanelRef.current?.expand()}
+                           onClick={openConsolePanel}
                            className={`h-7 shrink-0 flex items-center gap-2 px-3 text-[11px] font-medium border-t cursor-pointer transition-colors ${isDark ? 'bg-[#1e1e1e] border-[#333] text-gray-400 hover:text-white hover:bg-[#252526]' : 'bg-[#f3f3f3] border-[#ddd] text-gray-600 hover:text-black hover:bg-[#e8e8e8]'}`}
                          >
                            <TerminalIcon size={12} /> Console
@@ -697,7 +700,7 @@ export const MainLayout: React.FC = () => {
                      minSize={10}
                      collapsible
                      collapsedSize={0}
-                     onResize={(size) => { setShowConsole(size.asPercentage > 0.5); setConsoleSizePct(size.asPercentage); }}
+                     onResize={handleConsoleResize}
                    >
                      <ConsoleContainer onToggle={() => consolePanelRef.current?.collapse()} />
                    </Panel>
@@ -729,7 +732,7 @@ export const MainLayout: React.FC = () => {
                        <div className="flex-1 min-h-0"><EditorContainer /></div>
                        {!showConsole && (
                          <button
-                           onClick={() => consolePanelRef.current?.expand()}
+                           onClick={openConsolePanel}
                            className={`h-7 shrink-0 flex items-center gap-2 px-3 text-[11px] font-medium border-t cursor-pointer transition-colors ${isDark ? 'bg-[#1e1e1e] border-[#333] text-gray-400 hover:text-white hover:bg-[#252526]' : 'bg-[#f3f3f3] border-[#ddd] text-gray-600 hover:text-black hover:bg-[#e8e8e8]'}`}
                          >
                            <TerminalIcon size={12} /> Console
@@ -746,7 +749,7 @@ export const MainLayout: React.FC = () => {
                      minSize={10}
                      collapsible
                      collapsedSize={0}
-                     onResize={(size) => { setShowConsole(size.asPercentage > 0.5); setConsoleSizePct(size.asPercentage); }}
+                     onResize={handleConsoleResize}
                    >
                      <ConsoleContainer onToggle={() => consolePanelRef.current?.collapse()} />
                    </Panel>
@@ -781,15 +784,7 @@ export const MainLayout: React.FC = () => {
             <span>Ready</span>
           </div>
           <button
-            onClick={() => {
-              const p = consolePanelRef.current;
-              if (p) {
-                if (p.isCollapsed()) p.expand();
-                else p.collapse();
-              } else {
-                setShowConsole(s => !s);
-              }
-            }}
+            onClick={toggleConsolePanel}
             className="flex items-center gap-2 hover:opacity-100 transition-opacity bg-white/10 px-2 py-0.5 rounded-lg border border-white/10"
             title="Toggle Console (Ctrl+`)"
           >
