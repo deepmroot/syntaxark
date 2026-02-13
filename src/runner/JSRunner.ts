@@ -44,9 +44,69 @@ export class JSRunner implements ILanguageRunner {
               const start = performance.now();
               
               // If code looks like it wants DOM access, send it back for main-thread rendering
-              // Simple heuristic: check for 'react-dom' or 'document.getElementById'
-              if (e.data.code.includes('react-dom') || e.data.code.includes('document.getElementById')) {
-                 self.postMessage({ type: 'render', code: e.data.code });
+              // Simple heuristic: check for 'react-dom', 'document', or jQuery symbols
+              if (
+                e.data.code.includes('react-dom') || 
+                e.data.code.includes('document.') ||
+                e.data.code.includes('window.') ||
+                e.data.code.includes('$.') || 
+                e.data.code.includes('$("') || 
+                e.data.code.includes("$('") ||
+                e.data.code.includes('jQuery')
+              ) {
+                 const html = \`
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 20px; line-height: 1.5; }
+    #root, #app { min-height: 100px; }
+  </style>
+  <script>
+    (function() {
+      const originalFetch = window.fetch;
+      window.fetch = async (url, options) => {
+        if (typeof url === 'string' && url.includes('server_echo.php')) {
+          const params = new URLSearchParams(url.split('?')[1]);
+          const msg = params.get('message') || 'No message';
+          return new Response(msg, { status: 200 });
+        }
+        return originalFetch(url, options);
+      };
+
+      // Mock jQuery's $.get if it's used
+      const mockJQuery = () => {
+        if (window.jQuery) {
+          const originalGet = window.jQuery.get;
+          window.jQuery.get = function(url, data, success) {
+            if (typeof url === 'string' && url.includes('server_echo.php')) {
+              const msg = (data && data.message) ? data.message : 'No message';
+              if (typeof success === 'function') success(msg);
+              return {
+                done: (cb) => { if (typeof cb === 'function') cb(msg); return this; },
+                fail: () => { return this; }
+              };
+            }
+            return originalGet.apply(this, arguments);
+          };
+        } else {
+          setTimeout(mockJQuery, 10);
+        }
+      };
+      mockJQuery();
+    })();
+  <\\/script>
+</head>
+<body>
+  <div id="app"></div>
+  <div id="root"></div>
+  <script>\\\${e.data.code}<\\/script>
+</body>
+</html>\`;
+                 self.postMessage({ type: 'render', code: html });
                  self.postMessage({ type: 'done', duration: 0 }); // We consider bundling "done"
                  return;
               }

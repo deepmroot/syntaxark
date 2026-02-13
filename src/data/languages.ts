@@ -83,6 +83,14 @@ export const LANGUAGE_MAP: Record<string, LanguageConfig> = {
     template: `# 🚀 New Project\n\nThis is your new project file. You can write documentation here.\n\n### Tasks:\n- [ ] Write logic\n- [ ] Run tests\n- [ ] Deploy`, 
     color: '#083fa1' 
   },
+  'sql': {
+    name: 'SQL',
+    pistonRuntime: '',
+    pistonVersion: '',
+    monacoLanguage: 'sql',
+    template: `CREATE TABLE users(id INTEGER PRIMARY KEY, name TEXT);\nINSERT INTO users(name) VALUES ('Ada'), ('Linus');\nSELECT * FROM users;\n`,
+    color: '#336791'
+  },
 
   // SYSTEMS & BACKEND
   'py': { 
@@ -172,6 +180,14 @@ export const LANGUAGE_MAP: Record<string, LanguageConfig> = {
     monacoLanguage: 'kotlin', 
     template: `fun main() {\n    println("Hello, Kotlin!")\n    \n    val items = listOf("Kotlin", "Android")\n    for (item in items) {\n        println("Learning $item")\n    }\n}`, 
     color: '#a97bff' 
+  },
+  'dart': {
+    name: 'Dart',
+    pistonRuntime: 'dart',
+    pistonVersion: '2.19.6',
+    monacoLanguage: 'dart',
+    template: `void main() {\n  print('Hello from Dart!');\n}\n`,
+    color: '#00b4ab'
   },
   'lua': { 
     name: 'Lua', 

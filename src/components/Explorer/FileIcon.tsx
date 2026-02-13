@@ -30,6 +30,9 @@ const DEVICON_MAP: Record<string, string> = {
   r: 'devicon-r-plain colored',
   sh: 'devicon-bash-plain colored',
   md: 'devicon-markdown-original colored',
+  cs: 'devicon-csharp-plain colored',
+  sql: 'devicon-azuresqldatabase-plain colored',
+  dart: 'devicon-dart-plain colored',
 };
 
 export const FileIcon: React.FC<FileIconProps> = ({ name, size = 16, className = '' }) => {
@@ -49,11 +52,13 @@ export const FileIcon: React.FC<FileIconProps> = ({ name, size = 16, className =
   // Fallbacks using Lucide
   switch (ext) {
     case 'json':
-      return <FileJson size={size} className={className} color="#F0F0F0" />;
+      return <FileJson size={size} className={`${className} text-amber-400/80`} />;
     case 'md':
     case 'markdown':
-      return <FileText size={size} className={className} color="#083fa1" />;
+      return <FileText size={size} className={`${className} text-blue-400/80`} />;
+    case 'txt':
+      return <FileText size={size} className={`${className} text-gray-500/80`} />;
     default:
-      return <FileCode size={size} className={className} />;
+      return <FileCode size={size} className={`${className} text-gray-400/80`} />;
   }
 };

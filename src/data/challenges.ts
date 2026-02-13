@@ -9,6 +9,7 @@ export interface Challenge {
   title: string;
   difficulty: 'Easy' | 'Medium' | 'Hard';
   description: string;
+  functionName: string;
   initialCode: string;
   testCases: TestCase[];
 }
@@ -19,6 +20,7 @@ export const CHALLENGES: Challenge[] = [
     title: 'Two Sum',
     difficulty: 'Easy',
     description: 'Given an array of integers `nums` and an integer `target`, return indices of the two numbers such that they add up to `target`.',
+    functionName: 'twoSum',
     initialCode: `function twoSum(nums, target) {
   // Write your code here
 }`,
@@ -33,6 +35,7 @@ export const CHALLENGES: Challenge[] = [
     title: 'Palindrome Number',
     difficulty: 'Easy',
     description: 'Given an integer `x`, return `true` if `x` is a palindrome, and `false` otherwise.',
+    functionName: 'isPalindrome',
     initialCode: `function isPalindrome(x) {
   // Write your code here
 }`,

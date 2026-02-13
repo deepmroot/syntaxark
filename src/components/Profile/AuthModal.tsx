@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../store/useAuth';
 import { useEditor } from '../../store/useEditor';
-import { Ghost, X, Mail, Lock, User, Loader2, Check, AlertCircle, Eye, EyeOff } from 'lucide-react';
+import { Ghost, Mail, Lock, User, Loader2, Check, AlertCircle, Eye, EyeOff } from 'lucide-react';
 import { useMutation, useQuery } from 'convex/react';
 import { useAuthActions } from "@convex-dev/auth/react";
 import { api } from '../../../convex/_generated/api';
@@ -22,7 +22,7 @@ const GoogleIcon = () => (
 );
 
 export const AuthModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
-  const { loginAsGuest, login, signUp } = useAuth();
+  const { loginAsGuest, setAuthenticatedUser } = useAuth();
   const { signIn } = useAuthActions();
   const { theme } = useEditor();
   const isDark = theme === 'vs-dark';
@@ -74,130 +74,170 @@ export const AuthModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
     setLoading(true);
     try {
       if (mode === 'login') {
-        const result = await convexLogin({ email, password });
-        if (result) { login(email, password); onClose(); }
-        else { setError('Invalid email or password'); }
+        const result = await convexLogin({ identifier: email, password });
+        if (result) {
+          setAuthenticatedUser({
+            id: result._id,
+            username: result.username,
+            email: result.email,
+            avatar: result.avatar,
+            banner: result.banner,
+            bio: result.bio,
+            preferredLanguage: result.preferredLanguage,
+            isPro: result.isPro,
+            isVerified: result.isVerified,
+            stats: result.stats,
+            friends: result.friends as string[] | undefined,
+          });
+          onClose();
+        } else {
+          setError('IDENTIFICATION FAILED: INVALID CREDENTIALS');
+        }
       } else {
-        if (!usernameValid || !emailValid || !passwordValid) { setError('Please fix the errors above'); setLoading(false); return; }
+        if (!usernameValid || !emailValid || !passwordValid) { setError('VALIDATION ERROR: PROTOCOL VIOLATION'); setLoading(false); return; }
         const result = await convexSignUp({ username, email, password });
         if (result && 'error' in result) { setError(result.error as string); }
-        else if (result) { signUp(username, password); onClose(); }
+        else if (result?.user) {
+          setAuthenticatedUser({
+            id: result.user._id,
+            username: result.user.username,
+            email: result.user.email,
+            avatar: result.user.avatar,
+            banner: result.user.banner,
+            bio: result.user.bio,
+            preferredLanguage: result.user.preferredLanguage,
+            isPro: result.user.isPro,
+            isVerified: result.user.isVerified,
+            stats: result.user.stats,
+            friends: result.user.friends as string[] | undefined,
+          });
+          onClose();
+        }
       }
-    } catch { setError('Something went wrong'); }
+    } catch { setError('NEURAL LINK ERROR: UPLINK FAILED'); }
     finally { setLoading(false); }
   };
 
   const ValidationIcon = ({ valid, checking }: { valid: boolean | null; checking?: boolean }) => {
-    if (checking) return <Loader2 size={14} className="animate-spin text-gray-400" />;
+    if (checking) return <Loader2 size={12} className="animate-spin text-gray-600" />;
     if (valid === null) return null;
-    return valid ? <Check size={14} className="text-green-500" /> : <AlertCircle size={14} className="text-red-500" />;
+    return valid ? <Check size={12} className="text-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]" /> : <AlertCircle size={12} className="text-rose-500" />;
   };
 
   return (
-    <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-      <div className={`w-full max-w-sm rounded-2xl overflow-hidden shadow-2xl ${isDark ? 'bg-[#1a1a1a]' : 'bg-white'}`}>
-        <button onClick={onClose} className={`absolute top-3 right-3 p-1.5 rounded-full ${isDark ? 'text-gray-500 hover:text-white hover:bg-white/10' : 'text-gray-400 hover:text-black hover:bg-black/5'}`}>
-          <X size={18} />
-        </button>
-
-        <div className="p-6">
-          {/* Logo */}
-          <div className="flex flex-col items-center mb-5">
-            <img src="/logo.png" alt="SyntaxArk" className="w-20 h-20 object-contain mb-2" />
-            <h1 className={`text-xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`} style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
-              {mode === 'login' ? 'Welcome back' : 'Create account'}
+    <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/70 backdrop-blur-xl p-4 animate-in fade-in duration-300">
+      <div className={`w-full max-w-sm rounded-[32px] overflow-hidden shadow-2xl glass-panel animate-in zoom-in-95 duration-300 border-white/10 ${isDark ? 'text-gray-200' : 'text-gray-800'}`}>
+        
+        <div className="p-8">
+          {/* Header */}
+          <div className="flex flex-col items-center mb-8">
+            <div className="relative mb-4 group">
+              <div className="absolute inset-0 bg-blue-500/20 blur-xl rounded-full animate-pulse" />
+              <img src="/logo.png" alt="SyntaxArk" className="w-20 h-20 object-contain relative z-10 drop-shadow-2xl transition-transform group-hover:scale-110" />
+            </div>
+            <h1 className="text-lg font-black uppercase tracking-[0.3em] text-white">
+              {mode === 'login' ? 'Authentication' : 'Initialization'}
             </h1>
+            <p className="text-[9px] font-bold text-gray-500 uppercase tracking-widest mt-1">Synchronize Neural Interface</p>
           </div>
 
-          {/* OAuth - Side by Side */}
-          <div className="flex gap-3 mb-5">
+          {/* OAuth - High Contrast */}
+          <div className="grid grid-cols-2 gap-3 mb-6">
             <button 
               onClick={() => signIn("google")}
-              className={`flex-1 py-2.5 rounded-lg text-sm font-medium flex items-center justify-center gap-2 border transition-colors ${isDark ? 'bg-[#252526] border-[#333] hover:bg-[#2d2d2d] text-white' : 'bg-white border-gray-200 hover:bg-gray-50 text-gray-700'}`}
+              className="h-11 rounded-xl bg-white/5 border border-white/5 text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-3 hover:bg-white/10 hover:border-white/10 transition-all active:scale-95"
             >
               <GoogleIcon /> Google
             </button>
             <button 
               onClick={() => signIn("github")}
-              className={`flex-1 py-2.5 rounded-lg text-sm font-medium flex items-center justify-center gap-2 border transition-colors ${isDark ? 'bg-[#252526] border-[#333] hover:bg-[#2d2d2d] text-white' : 'bg-white border-gray-200 hover:bg-gray-50 text-gray-700'}`}
+              className="h-11 rounded-xl bg-white/5 border border-white/5 text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-3 hover:bg-white/10 hover:border-white/10 transition-all active:scale-95"
             >
               <GitHubIcon /> GitHub
             </button>
           </div>
 
           {/* Divider */}
-          <div className={`flex items-center gap-3 mb-5 text-xs ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
-            <div className={`flex-1 h-px ${isDark ? 'bg-[#333]' : 'bg-gray-200'}`} />
-            <span>or</span>
-            <div className={`flex-1 h-px ${isDark ? 'bg-[#333]' : 'bg-gray-200'}`} />
+          <div className="flex items-center gap-4 mb-6 opacity-30">
+            <div className="flex-1 h-px bg-white/20" />
+            <span className="text-[8px] font-black uppercase tracking-widest text-gray-500">Manual Protocol</span>
+            <div className="flex-1 h-px bg-white/20" />
           </div>
 
           {error && (
-            <div className="mb-4 p-2.5 rounded-lg bg-red-500/10 border border-red-500/20 text-red-500 text-xs flex items-center gap-2">
+            <div className="mb-6 p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400 text-[9px] font-black uppercase tracking-widest flex items-center gap-3 animate-in slide-in-from-top-2">
               <AlertCircle size={14} /> {error}
             </div>
           )}
 
-          <form onSubmit={handleSubmit} className="space-y-3">
+          <form onSubmit={handleSubmit} className="space-y-4">
             {mode === 'signup' && (
-              <div className="relative">
-                <User size={15} className={`absolute left-3 top-1/2 -translate-y-1/2 ${isDark ? 'text-gray-500' : 'text-gray-400'}`} />
-                <input
-                  type="text" placeholder="Username" value={username}
-                  onChange={(e) => setUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, ''))}
-                  required minLength={3} maxLength={20}
-                  className={`w-full pl-9 pr-8 py-2.5 rounded-lg text-sm border outline-none focus:ring-2 focus:ring-blue-500/50 ${isDark ? 'bg-[#252526] border-[#333] text-white placeholder-gray-500' : 'bg-gray-50 border-gray-200 text-gray-900 placeholder-gray-400'}`}
-                />
-                <div className="absolute right-3 top-1/2 -translate-y-1/2"><ValidationIcon valid={usernameValid} checking={checkingUsername} /></div>
+              <div className="space-y-1.5">
+                <label className="text-[9px] font-black uppercase tracking-widest text-gray-600 ml-1">Entity Identifier</label>
+                <div className="relative">
+                  <User size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-600" />
+                  <input
+                    type="text" placeholder="USERNAME" value={username}
+                    onChange={(e) => setUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, ''))}
+                    required minLength={3} maxLength={20}
+                    className="ethereal-input w-full h-11 pl-10 pr-10 text-xs font-bold uppercase tracking-wider"
+                  />
+                  <div className="absolute right-3 top-1/2 -translate-y-1/2"><ValidationIcon valid={usernameValid} checking={checkingUsername} /></div>
+                </div>
               </div>
             )}
 
-            <div className="relative">
-              <Mail size={15} className={`absolute left-3 top-1/2 -translate-y-1/2 ${isDark ? 'text-gray-500' : 'text-gray-400'}`} />
-              <input
-                type="email" placeholder="Email" value={email}
-                onChange={(e) => setEmail(e.target.value)} required
-                className={`w-full pl-9 pr-8 py-2.5 rounded-lg text-sm border outline-none focus:ring-2 focus:ring-blue-500/50 ${isDark ? 'bg-[#252526] border-[#333] text-white placeholder-gray-500' : 'bg-gray-50 border-gray-200 text-gray-900 placeholder-gray-400'}`}
-              />
-              {mode === 'signup' && <div className="absolute right-3 top-1/2 -translate-y-1/2"><ValidationIcon valid={emailValid} checking={checkingEmail} /></div>}
+            <div className="space-y-1.5">
+              <label className="text-[9px] font-black uppercase tracking-widest text-gray-600 ml-1">Comms Frequency</label>
+              <div className="relative">
+                <Mail size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-600" />
+                <input
+                  type={mode === 'login' ? 'text' : 'email'} placeholder={mode === 'login' ? 'EMAIL OR USERNAME' : 'EMAIL ADDRESS'} value={email}
+                  onChange={(e) => setEmail(e.target.value)} required
+                  className="ethereal-input w-full h-11 pl-10 pr-10 text-xs font-bold uppercase tracking-wider"
+                />
+                {mode === 'signup' && <div className="absolute right-3 top-1/2 -translate-y-1/2"><ValidationIcon valid={emailValid} checking={checkingEmail} /></div>}
+              </div>
             </div>
 
-            <div className="relative">
-              <Lock size={15} className={`absolute left-3 top-1/2 -translate-y-1/2 ${isDark ? 'text-gray-500' : 'text-gray-400'}`} />
-              <input
-                type={showPassword ? 'text' : 'password'} placeholder="Password" value={password}
-                onChange={(e) => setPassword(e.target.value)} required minLength={6}
-                className={`w-full pl-9 pr-16 py-2.5 rounded-lg text-sm border outline-none focus:ring-2 focus:ring-blue-500/50 ${isDark ? 'bg-[#252526] border-[#333] text-white placeholder-gray-500' : 'bg-gray-50 border-gray-200 text-gray-900 placeholder-gray-400'}`}
-              />
-              <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
-                {mode === 'signup' && <ValidationIcon valid={passwordValid} />}
-                <button type="button" onClick={() => setShowPassword(!showPassword)} className={`p-0.5 ${isDark ? 'text-gray-500 hover:text-gray-300' : 'text-gray-400 hover:text-gray-600'}`}>
-                  {showPassword ? <EyeOff size={14} /> : <Eye size={14} />}
-                </button>
+            <div className="space-y-1.5">
+              <label className="text-[9px] font-black uppercase tracking-widest text-gray-600 ml-1">Access Cipher</label>
+              <div className="relative">
+                <Lock size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-600" />
+                <input
+                  type={showPassword ? 'text' : 'password'} placeholder="••••••••" value={password}
+                  onChange={(e) => setPassword(e.target.value)} required minLength={6}
+                  className="ethereal-input w-full h-11 pl-10 pr-12 text-xs font-bold"
+                />
+                <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-2">
+                  {mode === 'signup' && <ValidationIcon valid={passwordValid} />}
+                  <button type="button" onClick={() => setShowPassword(!showPassword)} className="p-1 text-gray-600 hover:text-white transition-colors">
+                    {showPassword ? <EyeOff size={14} /> : <Eye size={14} />}
+                  </button>
+                </div>
               </div>
             </div>
 
             <button 
               type="submit" disabled={loading || (mode === 'signup' && (!usernameValid || !emailValid || !passwordValid))}
-              className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg font-semibold text-sm transition-colors flex items-center justify-center gap-2"
+              className="w-full h-12 bg-blue-600 hover:bg-blue-500 text-white rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] shadow-[0_0_25px_rgba(37,99,235,0.3)] transition-all flex items-center justify-center gap-3 disabled:opacity-20 active:scale-95 mt-4"
             >
-              {loading && <Loader2 size={16} className="animate-spin" />}
-              {mode === 'login' ? 'Sign In' : 'Sign Up'}
+              {loading ? <Loader2 size={16} className="animate-spin" /> : (mode === 'login' ? 'ESTABLISH LINK' : 'INITIALIZE NODE')}
             </button>
           </form>
 
           <button 
             onClick={() => { loginAsGuest(); onClose(); }}
-            className={`w-full mt-3 py-2.5 rounded-lg text-sm font-medium flex items-center justify-center gap-2 ${isDark ? 'text-gray-400 hover:text-gray-300 hover:bg-[#252526]' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100'}`}
+            className="w-full h-11 rounded-xl bg-white/5 border border-white/5 text-[9px] font-black uppercase tracking-widest text-gray-500 hover:text-white hover:bg-white/10 transition-all flex items-center justify-center gap-3 mt-3"
           >
-            <Ghost size={15} /> Guest
+            <Ghost size={14} /> Continue as Anonymous Ghost
           </button>
 
-          <p className="mt-4 text-center">
-            <button onClick={() => { setMode(mode === 'login' ? 'signup' : 'login'); setError(''); }} className={`text-xs ${isDark ? 'text-gray-500 hover:text-gray-300' : 'text-gray-400 hover:text-gray-600'}`}>
-              {mode === 'login' ? "Don't have an account? Sign up" : "Already have an account? Sign in"}
+          <div className="mt-8 pt-6 border-t border-white/5 text-center">
+            <button onClick={() => { setMode(mode === 'login' ? 'signup' : 'login'); setError(''); }} className="text-[9px] font-black uppercase tracking-[0.2em] text-gray-600 hover:text-blue-400 transition-colors">
+              {mode === 'login' ? "Initialize New Entity Protocol" : "Back to Authentication Protocol"}
             </button>
-          </p>
+          </div>
         </div>
       </div>
     </div>

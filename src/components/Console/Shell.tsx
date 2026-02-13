@@ -5,7 +5,6 @@ import { WebLinksAddon } from 'xterm-addon-web-links';
 import 'xterm/css/xterm.css';
 import { useFileSystem } from '../../store/useFileSystem';
 import { runner } from '../../runner/Runner';
-import { useEditor } from '../../store/useEditor';
 
 // Simple command history
 const history: string[] = [];
@@ -39,14 +38,23 @@ export const Shell: React.FC = () => {
     const term = new Terminal({
       cursorBlink: true,
       fontFamily: '"JetBrains Mono", monospace',
-      fontSize: 13,
+      fontSize: 12,
       theme: {
-        background: '#1e1e1e',
-        foreground: '#d4d4d4',
-        cursor: '#ffffff',
-        selectionBackground: 'rgba(255, 255, 255, 0.3)'
+        background: 'transparent',
+        foreground: '#a1a1aa',
+        cursor: '#3b82f6',
+        selectionBackground: 'rgba(59, 130, 246, 0.2)',
+        black: '#000000',
+        red: '#f43f5e',
+        green: '#10b981',
+        yellow: '#f59e0b',
+        blue: '#3b82f6',
+        magenta: '#d946ef',
+        cyan: '#06b6d4',
+        white: '#ffffff',
       },
-      convertEol: true, // Treat \n as \r\n
+      convertEol: true,
+      allowTransparency: true,
     });
 
     const fitAddon = new FitAddon();
@@ -70,7 +78,7 @@ export const Shell: React.FC = () => {
       const state = shellState.current;
 
       switch (data) {
-        case '\r': // Enter
+        case '\r': { // Enter
           const cmd = state.lineBuffer.trim();
           if (cmd) {
             history.push(cmd);
@@ -80,6 +88,7 @@ export const Shell: React.FC = () => {
           }
           writePrompt(term);
           break;
+        }
         case '\u007F': // Backspace
           if (state.cursorPos > 0) {
             state.lineBuffer = state.lineBuffer.slice(0, state.cursorPos - 1) + state.lineBuffer.slice(state.cursorPos);
@@ -255,7 +264,7 @@ export const Shell: React.FC = () => {
         else {
            const target = Object.values(useFileSystem.getState().nodes).find(n => n.name === args[0]);
            if (target && target.type === 'file') {
-             term.writeln(target.content.replace(/\n/g, '\r\n'));
+             term.writeln((target.content || '').replace(/\n/g, '\r\n'));
            } else {
              term.writeln(`cat: ${args[0]}: No such file`);
            }
@@ -294,17 +303,13 @@ export const Shell: React.FC = () => {
         break;
 
       default:
-         try {
-             // Safe-ish eval
-             // eslint-disable-next-line no-eval
-             const res = eval(fullCmd);
-             if (res !== undefined) term.writeln(String(res));
-         } catch (_e: any) {
-             term.writeln(`\x1b[31m${cmd}: command not found\x1b[0m`);
-         }
+         term.writeln(`\x1b[31m${cmd}: command not found\x1b[0m`);
+         term.writeln('Type "help" to see available commands.');
          break;
     }
   };
 
-  return <div ref={terminalRef} className="h-full w-full bg-[#1e1e1e]" />;
+  return (
+    <div ref={terminalRef} className="h-full w-full bg-transparent p-4 font-mono overflow-hidden" />
+  );
 };

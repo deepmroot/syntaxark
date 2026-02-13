@@ -9,11 +9,16 @@
  */
 
 import type * as auth from "../auth.js";
+import type * as billing from "../billing.js";
+import type * as billingHttp from "../billingHttp.js";
+import type * as challenges from "../challenges.js";
 import type * as chat from "../chat.js";
 import type * as community from "../community.js";
+import type * as crons from "../crons.js";
 import type * as files from "../files.js";
 import type * as http from "../http.js";
 import type * as rooms from "../rooms.js";
+import type * as securityHttp from "../securityHttp.js";
 import type * as users from "../users.js";
 
 import type {
@@ -24,11 +29,16 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   auth: typeof auth;
+  billing: typeof billing;
+  billingHttp: typeof billingHttp;
+  challenges: typeof challenges;
   chat: typeof chat;
   community: typeof community;
+  crons: typeof crons;
   files: typeof files;
   http: typeof http;
   rooms: typeof rooms;
+  securityHttp: typeof securityHttp;
   users: typeof users;
 }>;
 

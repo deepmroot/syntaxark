@@ -3,13 +3,13 @@ import { Keyboard } from 'lucide-react';
 import { SettingsSection } from './SettingsSection';
 
 const SHORTCUTS: [string, string][] = [
-  ['Ctrl + Enter', 'Run Code'],
+  ['Ctrl + Enter', 'Run'],
   ['Ctrl + Shift + Enter', 'Run Tests'],
   ['Ctrl + B', 'Toggle Sidebar'],
   ['Ctrl + ,', 'Open Settings'],
   ['Ctrl + Shift + F', 'Search Files'],
   ['Ctrl + Shift + E', 'Explorer'],
-  ['Ctrl + Shift + D', 'Toggle Drawing Board'],
+  ['Ctrl + Shift + D', 'Toggle Whiteboard'],
   ['Ctrl + \\', 'Toggle Split Editor'],
   ['Ctrl + `', 'Toggle Console'],
   ['Ctrl + T', 'Toggle Console'],

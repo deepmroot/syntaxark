@@ -3,22 +3,24 @@ import { EditorThemeSection, EditorFontSection, AppUISection, EditorBehaviorSect
 
 export const Settings: React.FC = () => {
   return (
-    <div className="h-full bg-[#252526] flex flex-col select-none overflow-hidden">
-      <div className="p-3 uppercase text-[11px] font-bold text-gray-500 tracking-wider border-b border-[#333]">
+    <div className="h-full bg-[#141417]/50 backdrop-blur-xl flex flex-col select-none overflow-hidden relative border-r border-white/5">
+      <div className="p-4 uppercase text-[10px] font-black text-gray-500 tracking-[0.3em] border-b border-white/5 bg-white/5">
         Settings
       </div>
       
-      <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-6 text-gray-300">
+      <div className="flex-1 overflow-y-auto custom-scrollbar p-8 space-y-12">
         <EditorThemeSection />
         <EditorFontSection />
         <EditorBehaviorSection />
         <AppUISection />
         <KeyboardShortcutsSection />
 
-        <InfoBanner title="Status: Ready">
-          SyntaxArk is running in **Session Mode**. 
-          All files and packages are stored in local cache.
-        </InfoBanner>
+        <div className="pt-4">
+          <InfoBanner title="Status: Ready">
+            SyntaxArk is running in **Session Mode**. 
+            All files and packages are stored in local cache.
+          </InfoBanner>
+        </div>
       </div>
     </div>
   );

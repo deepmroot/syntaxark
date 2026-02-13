@@ -38,11 +38,11 @@ export const ConsoleContainer: React.FC<{ onToggle?: () => void }> = ({ onToggle
     }
   };
 
-  const formatArg = (arg: any) => {
+  const formatArg = (arg: unknown) => {
     if (typeof arg === 'object' && arg !== null) {
       try {
         return JSON.stringify(arg, null, 2);
-      } catch (e) {
+      } catch {
         return String(arg);
       }
     }

@@ -15,13 +15,20 @@ export const createPost = mutation({
     type: v.string(),
     title: v.string(),
     content: v.string(),
+    attachmentStorageId: v.optional(v.id("_storage")),
+    attachmentType: v.optional(v.string()),
     codeSnippet: v.optional(v.string()),
     language: v.optional(v.string()),
     tags: v.array(v.string()),
   },
   handler: async (ctx, args) => {
+    let attachmentUrl: string | undefined = undefined;
+    if (args.attachmentStorageId) {
+      attachmentUrl = (await ctx.storage.getUrl(args.attachmentStorageId)) ?? undefined;
+    }
     await ctx.db.insert("posts", {
       ...args,
+      attachmentUrl,
       likes: 0,
       timestamp: Date.now(),
     });

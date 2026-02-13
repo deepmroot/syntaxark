@@ -6,8 +6,14 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "typecheck": "tsc -b",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "lint:deploy": "eslint --max-warnings=0 src/components/Layout/MainLayout.tsx src/components/Collaborate/CollaboratePanel.tsx src/components/Console/Shell.tsx src/components/Console/ConsoleContainer.tsx scripts/smoke.mjs",
+    "preview": "vite preview",
+    "smoke": "node scripts/smoke.mjs",
+    "test": "npm run -s smoke",
+    "predeploy": "npm run -s lint:deploy && npm run -s smoke && npm run -s build",
+    "ci:verify": "npm run -s predeploy"
   },
   "dependencies": {
     "@auth/core": "^0.37.4",

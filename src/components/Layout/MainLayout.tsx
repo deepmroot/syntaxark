@@ -20,14 +20,18 @@ import { PreviewPanel } from './PreviewPanel';
 import { CHALLENGES } from '../../data/challenges';
 import { useAuth } from '../../store/useAuth';
 import { useCommunity } from '../../store/useCommunity';
+import { useConvexAuth, useMutation } from 'convex/react';
+import { api } from '../../../convex/_generated/api';
 
 type SidebarTab = 'explorer' | 'challenges' | 'collaborate' | 'community' | 'search' | 'settings';
 
 export const MainLayout: React.FC = () => {
   const { isExecuting, setExecuting, addLog, clearLogs, setExecutionTime, executionTime, setTestResults, setPreviewCode, previewCode, theme, setTheme } = useEditor();
   const { nodes, activeFileId } = useFileSystem();
-  const { user, showAuth, setShowAuth, showProfile, setShowProfile } = useAuth();
+  const { user, showAuth, setShowAuth, showProfile, setShowProfile, setAuthenticatedUser } = useAuth();
   const { showCreatePost, setShowCreatePost } = useCommunity();
+  const { isAuthenticated: convexAuthenticated } = useConvexAuth();
+  const ensureCurrentUserProfile = useMutation(api.auth.ensureCurrentUserProfile);
   
   const [activeTab, setActiveTab] = useState<SidebarTab>('explorer');
   const [showDrawing, setShowDrawing] = useState(false);
@@ -38,9 +42,101 @@ export const MainLayout: React.FC = () => {
   const [fullscreenDrawing, setFullscreenDrawing] = useState(false);
   const [showShareModal, setShowShareModal] = useState(false);
   const [copyFeedback, setCopyFeedback] = useState('');
+  const [consoleSizePct, setConsoleSizePct] = useState(30);
   const consolePanelRef = useRef<PanelImperativeHandle>(null);
 
   const isDark = theme === 'vs-dark';
+  const ensureConsoleVisible = () => {
+    const p = consolePanelRef.current;
+    if (p) {
+      p.resize(30);
+      setShowConsole(true);
+      setConsoleSizePct(30);
+      return;
+    }
+    setShowConsole(true);
+  };
+  const setConsoleSize = (next: number) => {
+    const p = consolePanelRef.current;
+    const clamped = Math.max(0, Math.min(80, next));
+    if (!p) {
+      setShowConsole(clamped > 0.5);
+      setConsoleSizePct(clamped);
+      return;
+    }
+    if (clamped <= 0.5) {
+      p.collapse();
+      setShowConsole(false);
+      setConsoleSizePct(0);
+      return;
+    }
+    p.resize(clamped);
+    setShowConsole(true);
+    setConsoleSizePct(clamped);
+  };
+  const moveConsoleUp = () => setConsoleSize(consoleSizePct + 5);
+  const moveConsoleDown = () => setConsoleSize(consoleSizePct - 5);
+
+  useEffect(() => {
+    const syncTabFromHash = () => {
+      const params = new URLSearchParams(window.location.hash.slice(1));
+      const challenge = params.get('challenge');
+      if (challenge) {
+        setActiveTab('challenges');
+        setShowSidebar(true);
+      }
+    };
+    syncTabFromHash();
+    window.addEventListener('hashchange', syncTabFromHash);
+    return () => window.removeEventListener('hashchange', syncTabFromHash);
+  }, []);
+
+  useEffect(() => {
+    const onNavigate = (event: Event) => {
+      const custom = event as CustomEvent<{ tab?: SidebarTab }>;
+      const tab = custom.detail?.tab;
+      if (!tab) return;
+      setActiveTab(tab);
+      setShowSidebar(true);
+    };
+    window.addEventListener('syntaxark:navigate', onNavigate as EventListener);
+    return () => window.removeEventListener('syntaxark:navigate', onNavigate as EventListener);
+  }, []);
+
+  useEffect(() => {
+    if (!convexAuthenticated) return;
+    let cancelled = false;
+
+    const syncOAuthUser = async () => {
+      try {
+        const profile = await ensureCurrentUserProfile({});
+        if (!profile || cancelled) return;
+
+        setAuthenticatedUser({
+          id: profile._id,
+          username: profile.username,
+          email: profile.email,
+          avatar: profile.avatar ?? profile.image,
+          banner: profile.banner,
+          bio: profile.bio,
+          preferredLanguage: profile.preferredLanguage,
+          isPro: profile.isPro,
+          isVerified: profile.isVerified,
+          stats: profile.stats,
+          friends: profile.friends as string[] | undefined,
+        });
+
+        if (showAuth) setShowAuth(false);
+      } catch (err) {
+        console.error('OAuth profile sync failed', err);
+      }
+    };
+
+    void syncOAuthUser();
+    return () => {
+      cancelled = true;
+    };
+  }, [convexAuthenticated, ensureCurrentUserProfile, setAuthenticatedUser, setShowAuth, showAuth]);
 
   const renderSidebarContent = () => {
     switch (activeTab) {
@@ -55,7 +151,7 @@ export const MainLayout: React.FC = () => {
   };
 
   const handleTabClick = (tab: SidebarTab) => {
-    if (activeTab === tab && showSidebar) {
+    if (activeTab === tab && showSidebar && tab !== 'collaborate') {
       setShowSidebar(false);
     } else {
       setActiveTab(tab);
@@ -64,13 +160,94 @@ export const MainLayout: React.FC = () => {
   };
 
   const activeNode = activeFileId ? nodes[activeFileId] : null;
-  const activeChallenge = activeNode?.challengeId 
-    ? CHALLENGES.find(c => c.id === activeNode.challengeId) 
+  const builtInChallenge = activeNode?.challengeId
+    ? CHALLENGES.find(c => c.id === activeNode.challengeId)
     : null;
+  const activeChallenge = builtInChallenge
+    ? {
+        id: builtInChallenge.id,
+        title: builtInChallenge.title,
+        difficulty: builtInChallenge.difficulty,
+        description: builtInChallenge.description,
+        functionName: builtInChallenge.functionName,
+        testCases: builtInChallenge.testCases,
+        externalUrl: undefined as string | undefined,
+      }
+    : activeNode?.challengeMeta
+      ? {
+          id: activeNode.challengeId || activeNode.id,
+          title: activeNode.challengeMeta.title,
+          difficulty: activeNode.challengeMeta.difficulty || 'Unknown',
+          description: activeNode.challengeMeta.description,
+          functionName: activeNode.challengeMeta.functionName,
+          testCases: activeNode.challengeMeta.testCases || [],
+          externalUrl: activeNode.challengeMeta.externalUrl,
+        }
+      : null;
+  type LogType = 'log' | 'error' | 'warn' | 'info';
+  const normalizeLogType = (type: string): LogType => {
+    if (type === 'error' || type === 'warn' || type === 'info' || type === 'log') return type;
+    return 'log';
+  };
   const isChallenge = !!activeChallenge;
+  const canRunChallengeTests = Boolean(activeChallenge?.functionName && activeChallenge?.testCases.length);
+  const renderChallengeDescription = (raw: string) => {
+    const lines = raw.split('\n');
+    const extractUrl = (text: string) => {
+      const m = text.match(/https?:\/\/\S+/i);
+      return m ? m[0] : null;
+    };
+    return (
+      <div className="glass-card rounded-2xl border border-white/10 bg-white/[0.03] p-4 space-y-2">
+        {lines.map((line, idx) => {
+          const text = line.trim();
+          if (!text) return <div key={idx} className="h-1" />;
+          const detectedUrl = extractUrl(text);
+          if (detectedUrl) {
+            return null;
+          }
+          if (text.startsWith('# ')) {
+            return <h3 key={idx} className="text-sm font-black uppercase tracking-wider text-white">{text.slice(2)}</h3>;
+          }
+          if (text.startsWith('## ')) {
+            return <h4 key={idx} className="text-[11px] font-black uppercase tracking-[0.18em] text-blue-300 mt-2">{text.slice(3)}</h4>;
+          }
+          if (text.startsWith('- ')) {
+            return (
+              <div key={idx} className="flex items-start gap-2 text-[12px] leading-relaxed text-gray-300">
+                <span className="mt-[6px] w-1.5 h-1.5 rounded-full bg-blue-400/70 shrink-0" />
+                <span>{text.slice(2)}</span>
+              </div>
+            );
+          }
+          if (/^\d+\.\s/.test(text)) {
+            return (
+              <div key={idx} className="text-[12px] leading-relaxed text-gray-300">
+                <span className="text-blue-300 font-bold mr-1">{text.match(/^\d+\./)?.[0]}</span>
+                <span>{text.replace(/^\d+\.\s*/, '')}</span>
+              </div>
+            );
+          }
+          if (text.toLowerCase().startsWith('input:') || text.toLowerCase().startsWith('output:') || text.toLowerCase().startsWith('explanation:')) {
+            const parts = text.split(':');
+            const label = parts.shift() || '';
+            const content = parts.join(':').trim();
+            return (
+              <div key={idx} className="text-[12px] leading-relaxed">
+                <span className="text-emerald-300 font-bold uppercase tracking-wider">{label}:</span>
+                <span className="text-gray-300 ml-1">{content}</span>
+              </div>
+            );
+          }
+          return <p key={idx} className="text-[12px] leading-relaxed text-gray-300">{text}</p>;
+        })}
+      </div>
+    );
+  };
 
   const handleRun = async () => {
     if (!activeFileId) return;
+    ensureConsoleVisible();
     clearLogs();
     setTestResults(null);
     setPreviewCode(null);
@@ -83,7 +260,7 @@ export const MainLayout: React.FC = () => {
     const result = await runner.run(
       files, 
       activeFile.name, 
-      (type, content) => addLog(type as any, content),
+      (type, content) => addLog(normalizeLogType(type), content),
       (code) => setPreviewCode(code)
     );
     
@@ -92,15 +269,24 @@ export const MainLayout: React.FC = () => {
   };
 
   const handleRunTests = async () => {
-    if (!activeFileId || !activeNode?.challengeId) return;
-    const challenge = CHALLENGES.find(c => c.id === activeNode.challengeId);
-    if (!challenge) return;
+    if (!activeFileId || !activeNode || !activeChallenge) return;
+    ensureConsoleVisible();
+    if (!activeChallenge.functionName || !activeChallenge.testCases.length) {
+      addLog('warn', ['This challenge does not have executable test cases yet.']);
+      return;
+    }
     clearLogs();
     setTestResults(null);
     setExecuting(true);
     const files: Record<string, string> = {};
     Object.values(nodes).forEach(node => { if (node.type === 'file') files[node.name] = node.content || ''; });
-    const result = await runner.runTests(files, activeNode.name, challenge.testCases, (type, content) => { addLog(type as any, content); });
+    const result = await runner.runTests(
+      files,
+      activeNode.name,
+      activeChallenge.functionName,
+      activeChallenge.testCases,
+      (type: string, content: unknown[]) => { addLog(normalizeLogType(type), content); }
+    );
     setTestResults(result.results);
     setExecuting(false);
   };
@@ -222,8 +408,30 @@ export const MainLayout: React.FC = () => {
       if (ctrl && key === '\\') { e.preventDefault(); e.stopPropagation(); useFileSystem.getState().toggleSplit(); return; }
       if (ctrl && key.toLowerCase() === 's' && !shift) { e.preventDefault(); e.stopPropagation(); return; }
       if (ctrl && shift && key.toLowerCase() === 'p') { e.preventDefault(); e.stopPropagation(); setShowShortcuts(s => !s); return; }
-      if (ctrl && key === '`') { e.preventDefault(); e.stopPropagation(); const p = consolePanelRef.current; if (p) { p.isCollapsed() ? p.expand() : p.collapse(); } else { setShowConsole(s => !s); } return; }
-      if (ctrl && key.toLowerCase() === 't' && !shift) { e.preventDefault(); e.stopPropagation(); const p = consolePanelRef.current; if (p) { p.isCollapsed() ? p.expand() : p.collapse(); } else { setShowConsole(s => !s); } return; }
+      if (ctrl && key === '`') {
+        e.preventDefault();
+        e.stopPropagation();
+        const p = consolePanelRef.current;
+        if (p) {
+          if (p.isCollapsed()) p.expand();
+          else p.collapse();
+        } else {
+          setShowConsole(s => !s);
+        }
+        return;
+      }
+      if (ctrl && key.toLowerCase() === 't' && !shift) {
+        e.preventDefault();
+        e.stopPropagation();
+        const p = consolePanelRef.current;
+        if (p) {
+          if (p.isCollapsed()) p.expand();
+          else p.collapse();
+        } else {
+          setShowConsole(s => !s);
+        }
+        return;
+      }
       if (key === 'Escape') { setShowShortcuts(false); setShowDownloadMenu(false); setShowShareModal(false); if (fullscreenDrawing) setFullscreenDrawing(false); }
     };
     window.addEventListener('keydown', handler, true);
@@ -232,9 +440,9 @@ export const MainLayout: React.FC = () => {
   }, []);
 
   return (
-    <div className={`flex flex-col h-screen ${isDark ? 'bg-[#1e1e1e] text-gray-300' : 'bg-white text-gray-800'} overflow-hidden font-sans transition-colors duration-200`}>
+    <div className={`flex flex-col h-screen ${isDark ? 'bg-[#0f1117] text-gray-300' : 'bg-[#f5f7fb] text-gray-800'} overflow-hidden font-sans transition-colors duration-200`}>
       {/* Header */}
-      <header className={`h-12 border-b flex items-center justify-between px-4 shrink-0 z-50 ${isDark ? 'bg-[#252526] border-[#333]' : 'bg-[#f3f3f3] border-[#ddd]'}`}>
+      <header className={`h-12 border-b flex items-center justify-between px-4 shrink-0 z-50 backdrop-blur-xl ${isDark ? 'bg-[#1a1d27]/85 border-white/10' : 'bg-white/85 border-black/10'}`}>
         <div className="flex items-center gap-3 relative h-full">
           <div className="flex items-center justify-center w-10 h-10 shrink-0">
             <img 
@@ -307,12 +515,13 @@ export const MainLayout: React.FC = () => {
 
             {isChallenge && (
               <button 
-                onClick={handleRunTests}
-                disabled={isExecuting}
-                className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white px-3 py-1 rounded text-[11px] font-medium transition-colors"
-              >
-                <CheckCircle2 size={12} /> Run Tests
-              </button>
+            onClick={handleRunTests}
+            disabled={isExecuting || !canRunChallengeTests}
+            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white px-3 py-1 rounded text-[11px] font-medium transition-colors"
+            title={canRunChallengeTests ? 'Run challenge tests' : 'No runnable test cases'}
+          >
+            <CheckCircle2 size={12} /> Run Tests
+          </button>
             )}
             <button 
               onClick={isExecuting ? () => runner.stop() : handleRun}
@@ -331,7 +540,7 @@ export const MainLayout: React.FC = () => {
       <div className="flex-1 flex overflow-hidden">
         
         {/* Activity Bar */}
-        <aside className={`w-12 flex flex-col items-center py-4 gap-4 border-r shrink-0 ${isDark ? 'bg-[#333333] border-[#111]' : 'bg-[#2c2c2c] border-[#ddd]'}`}>
+        <aside className={`w-12 flex flex-col items-center py-4 gap-4 border-r shrink-0 backdrop-blur-xl ${isDark ? 'bg-[#181b23]/90 border-white/10' : 'bg-white/90 border-black/10'}`}>
           <button 
             onClick={() => handleTabClick('explorer')}
             className={`p-2 transition-colors relative ${activeTab === 'explorer' && showSidebar ? 'text-white' : 'text-gray-500 hover:text-gray-300'}`}
@@ -353,7 +562,7 @@ export const MainLayout: React.FC = () => {
           <button 
             onClick={() => setShowDrawing(!showDrawing)}
             className={`p-2 transition-colors relative ${showDrawing ? 'text-white' : 'text-gray-500 hover:text-gray-300'}`}
-            title="Drawing Board (Ctrl+Shift+D)"
+            title="Whiteboard (Ctrl+Shift+D)"
           >
             <PenTool size={24} strokeWidth={1.5} />
             {showDrawing && <div className="absolute left-0 top-1/4 bottom-1/4 w-0.5 bg-white" />}
@@ -423,7 +632,7 @@ export const MainLayout: React.FC = () => {
           {showSidebar && (
             <>
               <Panel id="sidebar-panel" defaultSize={20} minSize={5}>
-                <div className={`h-full w-full ${isDark ? 'bg-[#252526]' : 'bg-[#f3f3f3]'}`}>
+                <div className="h-full w-full glass-panel overflow-hidden min-w-0">
                   {renderSidebarContent()}
                 </div>
               </Panel>
@@ -434,28 +643,49 @@ export const MainLayout: React.FC = () => {
           {activeChallenge ? (
             <>
               <Panel id="challenge-panel" defaultSize={20} minSize={5}>
-                <div className={`h-full w-full flex flex-col border-r overflow-y-auto p-4 custom-scrollbar ${isDark ? 'bg-[#1e1e1e] border-[#333]' : 'bg-white border-[#ddd]'}`}>
-                  <div className="flex items-center gap-2 mb-3">
-                    <Trophy size={16} className="text-yellow-500" />
-                    <h2 className={`text-sm font-bold truncate ${isDark ? 'text-white' : 'text-black'}`}>{activeChallenge.title}</h2>
+                <div className={`h-full w-full flex flex-col border-r overflow-y-auto p-4 md:p-6 custom-scrollbar ${isDark ? 'bg-[#11141c]/90 border-white/10' : 'bg-white/90 border-black/10'}`}>
+                  <div className="flex items-center gap-3 mb-5 md:mb-6 min-w-0">
+                    <div className="p-2 rounded-xl bg-yellow-500/10 border border-yellow-500/20">
+                      <Trophy size={16} className="text-yellow-500" />
+                    </div>
+                    <h2 className={`text-xs md:text-sm font-black uppercase tracking-wider md:tracking-widest truncate ${isDark ? 'text-white' : 'text-black'}`}>{activeChallenge.title}</h2>
                   </div>
-                  <p className={`leading-relaxed text-[13px] whitespace-pre-wrap mb-6 ${isDark ? 'text-gray-300' : 'text-gray-600'}`}>
-                    {activeChallenge.description}
-                  </p>
-                  <div className="space-y-3">
-                    <h3 className={`text-[10px] font-bold uppercase tracking-widest border-b pb-1 ${isDark ? 'text-gray-500 border-[#333]' : 'text-gray-400 border-[#eee]'}`}>Test Cases</h3>
-                    {activeChallenge.testCases.map((tc: any, i: number) => (
-                      <div key={i} className={`p-2 rounded text-[10px] font-mono border ${isDark ? 'bg-[#252526] border-[#333]' : 'bg-[#f9f9f9] border-[#eee]'}`}>
-                        <div className="text-blue-400 mb-1 flex justify-between">
-                           <span>Input:</span>
-                           <span className={isDark ? 'text-gray-300' : 'text-gray-700'}>{JSON.stringify(tc.input)}</span>
-                        </div>
-                        <div className="text-green-400 flex justify-between">
-                           <span>Expected:</span>
-                           <span className={isDark ? 'text-gray-300' : 'text-gray-700'}>{JSON.stringify(tc.expected)}</span>
-                        </div>
+                  <div className="mb-8">
+                    <div className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-500 mb-2">Problem Description</div>
+                    {renderChallengeDescription(activeChallenge.description)}
+                  </div>
+                  {activeChallenge.externalUrl && (
+                    <a
+                      href={activeChallenge.externalUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-[10px] font-bold uppercase tracking-widest text-blue-400 hover:text-blue-300 transition-colors mb-6 inline-flex items-center gap-2"
+                    >
+                      <Globe size={12} /> View on LeetCode
+                    </a>
+                  )}
+                  <div className="space-y-4">
+                    <h3 className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-500 border-b border-white/5 pb-2">Test Cases</h3>
+                    {activeChallenge.testCases.length === 0 ? (
+                      <div className="p-4 rounded-2xl glass-card text-[11px] font-medium text-gray-500 border-dashed italic">
+                        No executable test cases available.
                       </div>
-                    ))}
+                    ) : (
+                      <div className="space-y-3">
+                        {activeChallenge.testCases.map((tc: { input: unknown; expected: unknown }, i: number) => (
+                          <div key={i} className="glass-card p-4 text-[10px] font-mono space-y-2 group hover:border-white/10 transition-colors">
+                            <div className="flex flex-col gap-1.5 md:flex-row md:justify-between md:items-center">
+                              <span className="text-blue-400/60 font-bold uppercase tracking-widest">Input</span>
+                              <span className="text-gray-300 bg-white/5 px-2 py-0.5 rounded-lg border border-white/5 break-all md:max-w-[70%] md:text-right">{JSON.stringify(tc.input)}</span>
+                            </div>
+                            <div className="flex flex-col gap-1.5 md:flex-row md:justify-between md:items-center">
+                              <span className="text-emerald-400/60 font-bold uppercase tracking-widest">Expected</span>
+                              <span className="text-gray-300 bg-white/5 px-2 py-0.5 rounded-lg border border-white/5 break-all md:max-w-[70%] md:text-right">{JSON.stringify(tc.expected)}</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </div>
               </Panel>
@@ -476,7 +706,7 @@ export const MainLayout: React.FC = () => {
                        )}
                      </div>
                    </Panel>
-                   <Separator className="resize-handle-vertical" />
+                   <Separator className="resize-handle-vertical console-resize-handle" />
                    <Panel
                      panelRef={consolePanelRef}
                      id="console-bottom"
@@ -484,7 +714,7 @@ export const MainLayout: React.FC = () => {
                      minSize={10}
                      collapsible
                      collapsedSize={0}
-                     onResize={(size) => setShowConsole(size.asPercentage > 0.5)}
+                     onResize={(size) => { setShowConsole(size.asPercentage > 0.5); setConsoleSizePct(size.asPercentage); }}
                    >
                      <ConsoleContainer onToggle={() => consolePanelRef.current?.collapse()} />
                    </Panel>
@@ -525,7 +755,7 @@ export const MainLayout: React.FC = () => {
                        )}
                      </div>
                    </Panel>
-                   <Separator className="resize-handle-vertical" />
+                   <Separator className="resize-handle-vertical console-resize-handle" />
                    <Panel
                      panelRef={consolePanelRef}
                      id="console-bottom-no-challenge"
@@ -533,7 +763,7 @@ export const MainLayout: React.FC = () => {
                      minSize={10}
                      collapsible
                      collapsedSize={0}
-                     onResize={(size) => setShowConsole(size.asPercentage > 0.5)}
+                     onResize={(size) => { setShowConsole(size.asPercentage > 0.5); setConsoleSizePct(size.asPercentage); }}
                    >
                      <ConsoleContainer onToggle={() => consolePanelRef.current?.collapse()} />
                    </Panel>
@@ -561,23 +791,57 @@ export const MainLayout: React.FC = () => {
       </div>
       
       {/* Status Bar */}
-      <footer className={`h-5 flex items-center px-3 text-[10px] justify-between shrink-0 ${isDark ? 'bg-[#007acc] text-white' : 'bg-[#007acc] text-white'}`}>
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-1"><TerminalIcon size={10} /> Ready</div>
+      <footer className={`min-h-6 flex items-center px-2 sm:px-4 py-1 text-[9px] font-black uppercase tracking-[0.16em] sm:tracking-[0.2em] justify-between shrink-0 z-[60] backdrop-blur-2xl border-t gap-2 ${isDark ? 'bg-blue-600 text-white border-white/10 shadow-[0_-4px_20px_rgba(37,99,235,0.2)]' : 'bg-blue-600 text-white border-black/10'}`}>
+        <div className="flex items-center gap-2 sm:gap-6 flex-wrap min-w-0">
+          <div className="flex items-center gap-2">
+            <div className="w-1.5 h-1.5 rounded-full bg-white shadow-[0_0_8px_rgba(255,255,255,0.8)] animate-pulse" />
+            <span>Ready</span>
+          </div>
           <button
-            onClick={() => { const p = consolePanelRef.current; if (p) { p.isCollapsed() ? p.expand() : p.collapse(); } else { setShowConsole(s => !s); } }}
-            className="flex items-center gap-1 opacity-80 hover:opacity-100 transition-opacity"
+            onClick={() => {
+              const p = consolePanelRef.current;
+              if (p) {
+                if (p.isCollapsed()) p.expand();
+                else p.collapse();
+              } else {
+                setShowConsole(s => !s);
+              }
+            }}
+            className="flex items-center gap-2 hover:opacity-100 transition-opacity bg-white/10 px-2 py-0.5 rounded-lg border border-white/10"
             title="Toggle Console (Ctrl+`)"
           >
             <TerminalIcon size={10} /> {showConsole ? 'Hide Console' : 'Show Console'}
           </button>
-          {activeFileId && <div className="opacity-80 tracking-wide">{nodes[activeFileId]?.name}</div>}
+          <button
+            onClick={ensureConsoleVisible}
+            className="flex items-center gap-2 hover:opacity-100 transition-opacity bg-white/10 px-2 py-0.5 rounded-lg border border-white/10"
+            title="Reset Console Height"
+          >
+            Reset Console
+          </button>
+          <button
+            onClick={moveConsoleUp}
+            className="flex items-center gap-2 hover:opacity-100 transition-opacity bg-white/10 px-2 py-0.5 rounded-lg border border-white/10"
+            title="Increase Console Height"
+          >
+            Console Up
+          </button>
+          <button
+            onClick={moveConsoleDown}
+            className="flex items-center gap-2 hover:opacity-100 transition-opacity bg-white/10 px-2 py-0.5 rounded-lg border border-white/10"
+            title="Decrease Console Height"
+          >
+            Console Down
+          </button>
+          {activeFileId && <div className="tracking-[0.1em] opacity-80 max-w-[28vw] truncate">{nodes[activeFileId]?.name}</div>}
         </div>
-        <div className="flex items-center gap-4">
-          <button onClick={() => setShowShortcuts(s => !s)} className="flex items-center gap-1 opacity-80 hover:opacity-100 transition-opacity" title="Keyboard Shortcuts (Ctrl+Shift+P)">
+        <div className="flex items-center gap-2 sm:gap-6 flex-wrap justify-end">
+          <button onClick={() => setShowShortcuts(s => !s)} className="flex items-center gap-2 hover:bg-white/10 px-2 py-0.5 rounded-lg transition-all" title="Keyboard Shortcuts (Ctrl+Shift+P)">
             <Keyboard size={10} /> Shortcuts
           </button>
+          <div className="w-px h-2.5 bg-white/20" />
           <span>UTF-8</span>
+          <div className="w-px h-2.5 bg-white/20" />
           <span>{activeFileId ? (nodes[activeFileId]?.extension || 'txt').toUpperCase() : 'Plain Text'}</span>
         </div>
       </footer>
@@ -594,18 +858,18 @@ export const MainLayout: React.FC = () => {
             </div>
             <div className="overflow-y-auto max-h-[60vh] p-3 space-y-1">
               {[
-                ['Ctrl + Enter', 'Run Code'],
+                ['Ctrl + Enter', 'Run'],
                 ['Ctrl + Shift + Enter', 'Run Tests'],
                 ['Ctrl + B', 'Toggle Sidebar'],
                 ['Ctrl + ,', 'Open Settings'],
                 ['Ctrl + Shift + F', 'Search Files'],
                 ['Ctrl + Shift + E', 'Explorer'],
-                ['Ctrl + Shift + D', 'Toggle Drawing Board'],
+                ['Ctrl + Shift + D', 'Toggle Whiteboard'],
                 ['Ctrl + \\', 'Toggle Split Editor'],
                 ['Ctrl + `', 'Toggle Console'],
                 ['Ctrl + T', 'Toggle Console'],
                 ['Ctrl + S', 'Save (auto-saved)'],
-                ['Ctrl + Shift + P', 'Show / Hide This Panel'],
+                ['Ctrl + Shift + P', 'Toggle Shortcuts Panel'],
                 ['Escape', 'Close Dialogs'],
               ].map(([keys, action]) => (
                 <div key={keys} className={`flex items-center justify-between py-2 px-3 rounded ${isDark ? 'hover:bg-[#2d2d2d]' : 'hover:bg-gray-100'}`}>

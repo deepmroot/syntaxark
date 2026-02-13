@@ -19,6 +19,14 @@ type Tool =
   | 'stamp-cloud' | 'stamp-note' | 'stamp-actor' | 'stamp-process';
 
 interface Point { x: number; y: number }
+interface RemoteCursor {
+  userId: string;
+  username: string;
+  color: string;
+  cursorX?: number;
+  cursorY?: number;
+  isSharing?: boolean;
+}
 
 /* ═══════════════════ persistent state (survives close/open) ═══════════════════ */
 
@@ -207,26 +215,55 @@ const Btn: React.FC<{
 }> = ({ active, onClick, title, children, isDark, className = '' }) => (
   <button
     onClick={onClick} title={title}
-    className={`p-1.5 rounded-md transition-all duration-100 flex items-center justify-center ${active ? 'bg-blue-600 text-white shadow-sm shadow-blue-500/30'
-      : isDark ? 'text-gray-400 hover:text-white hover:bg-[#3e3e42]'
-      : 'text-gray-600 hover:text-black hover:bg-[#e0e0e0]'
+    className={`p-2 rounded-xl transition-all duration-200 flex items-center justify-center border ${
+      active 
+        ? 'bg-blue-600/20 text-blue-400 border-blue-500/30 shadow-[0_0_15px_rgba(59,130,246,0.3)]'
+        : isDark 
+          ? 'text-gray-500 border-transparent hover:text-gray-300 hover:bg-white/5 hover:border-white/5'
+          : 'text-gray-600 border-transparent hover:text-black hover:bg-black/5 hover:border-black/5'
     } ${className}`}
   >{children}</button>
 );
 
 const SectionLabel: React.FC<{ label: string; isDark: boolean }> = ({ label, isDark }) => (
-  <div className={`text-[9px] font-semibold uppercase tracking-widest px-1 pt-2 pb-0.5 ${isDark ? 'text-gray-600' : 'text-gray-400'}`}>
+  <div className={`text-[8px] font-black uppercase tracking-[0.2em] px-1 pt-4 pb-1 select-none ${isDark ? 'text-gray-600' : 'text-gray-400'}`}>
     {label}
   </div>
 );
 
-const SZ = 15;
+const SZ = 16;
 
 /* ═══════════════════════════════════════════════════════
    MAIN COMPONENT
    ═══════════════════════════════════════════════════════ */
 
-export const DrawingCanvas: React.FC<{ onClose: () => void; isFullscreen?: boolean; onFullscreen?: () => void }> = ({ onClose, isFullscreen, onFullscreen }) => {
+export const DrawingCanvas: React.FC<{
+  onClose: () => void;
+  isFullscreen?: boolean;
+  onFullscreen?: () => void;
+  canEdit?: boolean;
+  initialSnapshot?: string | null;
+  snapshotVersion?: number;
+  snapshotUpdatedBy?: string;
+  localUserId?: string;
+  onSnapshotChange?: (snapshot: string) => void;
+  onCursorMove?: (x: number, y: number) => void;
+  remoteCursors?: RemoteCursor[];
+  showSplitSuggestion?: boolean;
+}> = ({
+  onClose,
+  isFullscreen,
+  onFullscreen,
+  canEdit = true,
+  initialSnapshot,
+  snapshotVersion,
+  snapshotUpdatedBy,
+  localUserId,
+  onSnapshotChange,
+  onCursorMove,
+  remoteCursors = [],
+  showSplitSuggestion = false,
+}) => {
   const { theme } = useEditor();
   const isDark = theme === 'vs-dark';
   const bgColor = isDark ? '#1e1e1e' : '#ffffff';
@@ -269,6 +306,10 @@ export const DrawingCanvas: React.FC<{ onClose: () => void; isFullscreen?: boole
   const redos = useRef<ImageData[]>([..._savedRedos]);
   const initDone = useRef(false);
   const lastMouseRef = useRef<Point>({ x: 0, y: 0 });
+  const snapshotDebounceRef = useRef<number | null>(null);
+  const lastSnapshotSentRef = useRef('');
+  const lastAppliedSnapshotVersionRef = useRef<number>(0);
+  const lastLocalDrawAtRef = useRef<number>(0);
 
   const isStamp = (tool as string).startsWith('stamp-');
   const isFree = ['pencil', 'pen', 'marker', 'eraser'].includes(tool);
@@ -316,7 +357,31 @@ export const DrawingCanvas: React.FC<{ onClose: () => void; isFullscreen?: boole
         vctx.beginPath(); vctx.moveTo(0, y); vctx.lineTo(view.width, y); vctx.stroke();
       }
     }
-  }, [bgColor, isDark, showGrid]);
+
+    remoteCursors.forEach((cursor) => {
+      if (cursor.cursorX === undefined || cursor.cursorY === undefined) return;
+      const sx = (cursor.cursorX + panRef.current.x) * zoomRef.current;
+      const sy = (cursor.cursorY + panRef.current.y) * zoomRef.current;
+      if (sx < -40 || sy < -40 || sx > view.width + 40 || sy > view.height + 40) return;
+      vctx.save();
+      vctx.fillStyle = cursor.color || '#60a5fa';
+      vctx.beginPath();
+      vctx.moveTo(sx, sy);
+      vctx.lineTo(sx + 9, sy + 18);
+      vctx.lineTo(sx + 3, sy + 16);
+      vctx.lineTo(sx, sy + 24);
+      vctx.closePath();
+      vctx.fill();
+      const label = `${cursor.username}${cursor.isSharing ? ' (sharing)' : ''}`;
+      vctx.font = '11px sans-serif';
+      const tw = vctx.measureText(label).width;
+      vctx.fillStyle = 'rgba(0,0,0,0.65)';
+      vctx.fillRect(sx + 12, sy + 4, tw + 8, 16);
+      vctx.fillStyle = '#fff';
+      vctx.fillText(label, sx + 16, sy + 16);
+      vctx.restore();
+    });
+  }, [bgColor, isDark, showGrid, remoteCursors]);
 
   /* ─── init big canvas + restore state ─── */
   useEffect(() => {
@@ -337,6 +402,39 @@ export const DrawingCanvas: React.FC<{ onClose: () => void; isFullscreen?: boole
     initDone.current = true;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (!initialSnapshot || !snapshotVersion) return;
+    if (snapshotVersion === lastAppliedSnapshotVersionRef.current) return;
+    if (drawing) return;
+    if (localUserId && snapshotUpdatedBy && snapshotUpdatedBy === localUserId) {
+      lastAppliedSnapshotVersionRef.current = snapshotVersion;
+      return;
+    }
+    if (initialSnapshot === lastSnapshotSentRef.current) {
+      lastAppliedSnapshotVersionRef.current = snapshotVersion;
+      return;
+    }
+    if (Date.now() - lastLocalDrawAtRef.current < 700) return;
+
+    const c = canvasRef.current;
+    if (!c) return;
+    const ctx = c.getContext('2d');
+    if (!ctx) return;
+    const img = new Image();
+    img.onload = () => {
+      ctx.clearRect(0, 0, c.width, c.height);
+      ctx.fillStyle = bgColor;
+      ctx.fillRect(0, 0, c.width, c.height);
+      ctx.drawImage(img, 0, 0, c.width, c.height);
+      const snapshot = ctx.getImageData(0, 0, c.width, c.height);
+      undos.current = [snapshot];
+      redos.current = [];
+      lastAppliedSnapshotVersionRef.current = snapshotVersion;
+      renderView();
+    };
+    img.src = initialSnapshot;
+  }, [initialSnapshot, snapshotVersion, snapshotUpdatedBy, localUserId, drawing, bgColor, renderView]);
 
   /* ─── fit viewport on mount/resize ─── */
   useEffect(() => {
@@ -383,8 +481,18 @@ export const DrawingCanvas: React.FC<{ onClose: () => void; isFullscreen?: boole
     undos.current.push(c.getContext('2d')!.getImageData(0, 0, c.width, c.height));
     if (undos.current.length > 50) undos.current.shift();
     redos.current = [];
+    lastLocalDrawAtRef.current = Date.now();
     renderView();
-  }, [renderView]);
+    if (onSnapshotChange) {
+      if (snapshotDebounceRef.current) window.clearTimeout(snapshotDebounceRef.current);
+      snapshotDebounceRef.current = window.setTimeout(() => {
+        const snapshot = canvasRef.current?.toDataURL('image/png');
+        if (!snapshot || snapshot === lastSnapshotSentRef.current) return;
+        lastSnapshotSentRef.current = snapshot;
+        onSnapshotChange(snapshot);
+      }, 350);
+    }
+  }, [onSnapshotChange, renderView]);
 
   const undo = useCallback(() => {
     const c = canvasRef.current;
@@ -405,7 +513,18 @@ export const DrawingCanvas: React.FC<{ onClose: () => void; isFullscreen?: boole
 
   /* ─── keyboard ─── */
   useEffect(() => {
+    const isEditableTarget = (target: EventTarget | null) => {
+      const el = target as HTMLElement | null;
+      if (!el) return false;
+      if (el.isContentEditable) return true;
+      const tag = el.tagName?.toLowerCase();
+      if (tag === 'input' || tag === 'textarea' || tag === 'select') return true;
+      if (el.closest('input, textarea, select, [contenteditable="true"]')) return true;
+      return false;
+    };
+
     const onKey = (e: KeyboardEvent) => {
+      if (isEditableTarget(e.target)) return;
       if (e.key === 'Control') ctrlHeld.current = true;
       if (e.ctrlKey && e.key === 'z') { e.preventDefault(); undo(); }
       if (e.ctrlKey && e.key === 'y') { e.preventDefault(); redo(); }
@@ -563,6 +682,7 @@ export const DrawingCanvas: React.FC<{ onClose: () => void; isFullscreen?: boole
 
   /* ─── mouse handlers ─── */
   const onDown = (e: React.MouseEvent) => {
+    if (!canEdit) return;
     const screenP = { x: e.clientX, y: e.clientY };
     const p = toCanvas(e.clientX, e.clientY);
 
@@ -616,6 +736,7 @@ export const DrawingCanvas: React.FC<{ onClose: () => void; isFullscreen?: boole
   const onMove = (e: React.MouseEvent) => {
     const screenP = { x: e.clientX, y: e.clientY };
     const p = toCanvas(e.clientX, e.clientY);
+    if (onCursorMove) onCursorMove(p.x, p.y);
     lastMouseRef.current = p;
 
     if (panning) {
@@ -626,7 +747,7 @@ export const DrawingCanvas: React.FC<{ onClose: () => void; isFullscreen?: boole
       return;
     }
 
-    if (!drawing) return;
+    if (!drawing || !canEdit) return;
 
     if (isFree) {
       const ctx = canvasRef.current!.getContext('2d')!;
@@ -720,6 +841,7 @@ export const DrawingCanvas: React.FC<{ onClose: () => void; isFullscreen?: boole
 
   const isPanning = panning || tool === 'hand' || ctrlHeld.current;
   const cursor = (() => {
+    if (!canEdit) return 'default';
     if (isPanning) return panning ? 'grabbing' : 'grab';
     if (tool === 'text') return 'text';
     if (tool === 'select') return 'default';
@@ -731,16 +853,16 @@ export const DrawingCanvas: React.FC<{ onClose: () => void; isFullscreen?: boole
   /* ═══════════════════ RENDER ═══════════════════ */
 
   return (
-    <div className={`flex h-full overflow-hidden ${isDark ? 'bg-[#1e1e1e]' : 'bg-[#f8f8f8]'}`}>
+    <div className={`flex h-full overflow-hidden relative ${isDark ? 'bg-[#141417]/50 backdrop-blur-xl' : 'bg-[#f8f8f8]'}`}>
 
       {/* hidden full-size canvas (off-screen drawing surface) */}
       <canvas ref={canvasRef} className="hidden" />
 
       {/* ─── LEFT SIDEBAR ─── */}
-      <div className={`w-[52px] shrink-0 flex flex-col items-center border-r overflow-y-auto custom-scrollbar py-1 gap-[1px] ${isDark ? 'bg-[#252526] border-[#333]' : 'bg-[#f3f3f3] border-[#ddd]'}`}>
-        <Btn onClick={onClose} title="Close" isDark={isDark}><XIcon size={SZ} /></Btn>
+      <div className={`w-[60px] shrink-0 flex flex-col items-center border-r overflow-y-auto no-scrollbar py-4 gap-1 backdrop-blur-2xl ${isDark ? 'bg-[#1a1a1e]/80 border-white/5' : 'bg-[#fcfcfc]/80 border-black/5'}`}>
+        <Btn onClick={onClose} title="Close" isDark={isDark} className="mb-2 text-rose-500 hover:bg-rose-500/10 hover:border-rose-500/20"><XIcon size={SZ} /></Btn>
         {onFullscreen && (
-          <Btn onClick={onFullscreen} title={isFullscreen ? 'Exit Fullscreen (Esc)' : 'Fullscreen'} isDark={isDark}>
+          <Btn onClick={onFullscreen} title={isFullscreen ? 'Exit Fullscreen (Esc)' : 'Fullscreen'} isDark={isDark} className="mb-2">
             {isFullscreen ? <Minimize2 size={SZ} /> : <Maximize size={SZ} />}
           </Btn>
         )}
@@ -783,43 +905,50 @@ export const DrawingCanvas: React.FC<{ onClose: () => void; isFullscreen?: boole
       <div className="flex-1 flex flex-col overflow-hidden">
 
         {/* top controls */}
-        <div className={`flex items-center gap-2 px-3 py-1.5 border-b shrink-0 ${isDark ? 'bg-[#252526] border-[#333]' : 'bg-[#f3f3f3] border-[#ddd]'}`}>
-          <label className="flex items-center gap-1 text-[10px] select-none cursor-pointer" title="Fill shapes">
-            <input type="checkbox" checked={doFill} onChange={() => setDoFill(!doFill)} className="accent-blue-500 w-3 h-3" />
-            <span className={isDark ? 'text-gray-400' : 'text-gray-600'}>Fill</span>
+        <div className={`flex items-center gap-4 px-4 h-14 border-b shrink-0 backdrop-blur-2xl ${isDark ? 'bg-[#1a1a1e]/80 border-white/5' : 'bg-[#fcfcfc]/80 border-black/5'}`}>
+          <label className="flex items-center gap-3 cursor-pointer group px-3 py-1.5 rounded-xl hover:bg-white/5 transition-all">
+            <div className="relative flex items-center">
+              <input type="checkbox" checked={doFill} onChange={() => setDoFill(!doFill)} className="sr-only" />
+              <div className={`w-8 h-4 rounded-full transition-colors ${doFill ? 'bg-blue-500' : 'bg-white/10'}`} />
+              <div className={`absolute left-0.5 w-3 h-3 rounded-full bg-white transition-transform ${doFill ? 'translate-x-4' : 'translate-x-0'}`} />
+            </div>
+            <span className={`text-[10px] font-black uppercase tracking-widest ${isDark ? 'text-gray-500 group-hover:text-gray-300' : 'text-gray-600'}`}>Fill</span>
           </label>
 
-          <div className={`w-px h-4 ${isDark ? 'bg-[#444]' : 'bg-[#ccc]'}`} />
-          <div className="flex items-center gap-1.5">
-            <span className={`text-[10px] ${isDark ? 'text-gray-500' : 'text-gray-500'}`}>Size</span>
-            <input type="range" min={1} max={30} value={size} onChange={e => setSize(+e.target.value)} className="w-16 h-1 accent-blue-500" />
-            <span className={`text-[10px] w-5 text-center tabular-nums ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>{size}</span>
+          <div className="w-[1px] h-4 bg-white/10" />
+          
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-3">
+              <span className="text-[10px] font-black uppercase tracking-widest text-gray-600">Size</span>
+              <input type="range" min={1} max={30} value={size} onChange={e => setSize(+e.target.value)} className="ethereal-range w-24 h-1" />
+              <span className="text-[10px] font-bold w-5 text-center text-gray-400 tabular-nums">{size}</span>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <span className="text-[10px] font-black uppercase tracking-widest text-gray-600">Opac</span>
+              <input type="range" min={5} max={100} value={opacity} onChange={e => setOpacity(+e.target.value)} className="ethereal-range w-20 h-1" />
+              <span className="text-[10px] font-bold w-8 text-center text-gray-400 tabular-nums">{opacity}%</span>
+            </div>
           </div>
 
-          <div className={`w-px h-4 ${isDark ? 'bg-[#444]' : 'bg-[#ccc]'}`} />
-          <div className="flex items-center gap-1.5">
-            <span className={`text-[10px] ${isDark ? 'text-gray-500' : 'text-gray-500'}`}>Opacity</span>
-            <input type="range" min={5} max={100} value={opacity} onChange={e => setOpacity(+e.target.value)} className="w-14 h-1 accent-blue-500" />
-            <span className={`text-[10px] w-7 text-center tabular-nums ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>{opacity}%</span>
-          </div>
+          <div className="w-[1px] h-4 bg-white/10" />
 
-          <div className={`w-px h-4 ${isDark ? 'bg-[#444]' : 'bg-[#ccc]'}`} />
-          <div className="flex items-center gap-1.5">
-            <label title="Stroke color" className="relative cursor-pointer">
-              <div className="w-5 h-5 rounded border border-gray-500 shadow-sm" style={{ backgroundColor: color }}>
+          <div className="flex items-center gap-3">
+            <label title="Stroke color" className="relative cursor-pointer group">
+              <div className="w-6 h-6 rounded-lg border border-white/20 shadow-lg transition-transform group-hover:scale-110" style={{ backgroundColor: color }}>
                 <input type="color" value={color} onChange={e => setColor(e.target.value)} className="opacity-0 absolute inset-0 cursor-pointer" />
               </div>
             </label>
-            <label title="Fill color" className="relative cursor-pointer">
-              <div className="w-5 h-5 rounded border border-gray-500 shadow-sm flex items-center justify-center" style={{ backgroundColor: fillColor }}>
-                <span className="text-[7px] text-white font-bold drop-shadow">F</span>
+            <label title="Fill color" className="relative cursor-pointer group">
+              <div className="w-6 h-6 rounded-lg border border-white/20 shadow-lg flex items-center justify-center transition-transform group-hover:scale-110" style={{ backgroundColor: fillColor }}>
+                <span className="text-[8px] text-white font-black drop-shadow-md">F</span>
                 <input type="color" value={fillColor} onChange={e => setFillColor(e.target.value)} className="opacity-0 absolute inset-0 cursor-pointer" />
               </div>
             </label>
-            <div className="flex items-center gap-[2px] ml-0.5">
-              {presets.map(c => (
+            <div className="flex items-center gap-1.5 ml-1">
+              {presets.slice(0, 10).map(c => (
                 <button key={c} onClick={() => setColor(c)} title={c}
-                  className={`w-3.5 h-3.5 rounded-[3px] border transition-transform hover:scale-[1.3] ${color === c ? 'border-blue-400 ring-1 ring-blue-400/50 scale-110' : 'border-gray-600/20'}`}
+                  className={`w-4 h-4 rounded-md transition-all hover:scale-125 active:scale-95 ${color === c ? 'ring-2 ring-blue-500 ring-offset-2 ring-offset-[#1e1e1e]' : 'border border-white/5'}`}
                   style={{ backgroundColor: c }}
                 />
               ))}
@@ -829,20 +958,20 @@ export const DrawingCanvas: React.FC<{ onClose: () => void; isFullscreen?: boole
           <div className="flex-1" />
 
           {/* zoom controls */}
-          <div className="flex items-center gap-1">
-            <Btn onClick={() => doZoom(-0.15)} title="Zoom Out" isDark={isDark}><ZoomOut size={SZ} /></Btn>
-            <span className={`text-[10px] w-10 text-center tabular-nums ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>{Math.round(zoom * 100)}%</span>
-            <Btn onClick={() => doZoom(0.15)} title="Zoom In" isDark={isDark}><ZoomIn size={SZ} /></Btn>
-            <Btn onClick={resetView} title="Reset View" isDark={isDark}><Maximize size={SZ} /></Btn>
+          <div className="flex items-center gap-1 bg-white/5 p-1 rounded-2xl border border-white/5">
+            <Btn onClick={() => doZoom(-0.15)} title="Zoom Out" isDark={isDark} className="h-8 w-8"><ZoomOut size={14} /></Btn>
+            <span className="text-[10px] font-black w-10 text-center text-gray-400 tabular-nums">{Math.round(zoom * 100)}%</span>
+            <Btn onClick={() => doZoom(0.15)} title="Zoom In" isDark={isDark} className="h-8 w-8"><ZoomIn size={14} /></Btn>
+            <Btn onClick={resetView} title="Reset View" isDark={isDark} className="h-8 w-8"><Maximize size={14} /></Btn>
           </div>
 
-          <div className={`w-px h-4 ${isDark ? 'bg-[#444]' : 'bg-[#ccc]'}`} />
+          <div className="w-[1px] h-4 mx-2 bg-white/10" />
 
-          <div className="flex items-center gap-0.5">
-            <Btn onClick={undo} title="Undo (Ctrl+Z)" isDark={isDark}><Undo2 size={SZ} /></Btn>
-            <Btn onClick={redo} title="Redo (Ctrl+Y)" isDark={isDark}><Redo2 size={SZ} /></Btn>
-            <Btn onClick={clearCanvas} title="Clear Canvas" isDark={isDark}><Trash2 size={SZ} /></Btn>
-            <Btn onClick={downloadPng} title="Save as PNG" isDark={isDark}><Download size={SZ} /></Btn>
+          <div className="flex items-center gap-1 bg-white/5 p-1 rounded-2xl border border-white/5">
+            <Btn onClick={undo} title="Undo (Ctrl+Z)" isDark={isDark} className="h-8 w-8"><Undo2 size={14} /></Btn>
+            <Btn onClick={redo} title="Redo (Ctrl+Y)" isDark={isDark} className="h-8 w-8"><Redo2 size={14} /></Btn>
+            <Btn onClick={clearCanvas} title="Clear Canvas" isDark={isDark} className="h-8 w-8 hover:text-rose-400 hover:bg-rose-500/10"><Trash2 size={14} /></Btn>
+            <Btn onClick={downloadPng} title="Save as PNG" isDark={isDark} className="h-8 w-8 text-emerald-400 hover:bg-emerald-500/10"><Download size={14} /></Btn>
           </div>
         </div>
 
@@ -867,14 +996,14 @@ export const DrawingCanvas: React.FC<{ onClose: () => void; isFullscreen?: boole
               onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter') commitText(); if (e.key === 'Escape') { setTextPos(null); setTextVal(''); } }}
               onBlur={commitText}
               onClick={e => e.stopPropagation()}
-              className={`absolute px-1.5 py-0.5 outline-none border rounded ${isDark ? 'bg-[#2d2d2d] text-white border-blue-500' : 'bg-white text-black border-blue-500'}`}
+              className="absolute px-3 py-1.5 glass-panel outline-none border border-blue-500/50 shadow-2xl rounded-xl animate-in fade-in zoom-in-95"
               style={{
                 left: (textPos.x + panRef.current.x) * zoomRef.current,
                 top: (textPos.y + panRef.current.y) * zoomRef.current - 10,
                 fontSize: `${(size * 4 + 14) * zoomRef.current}px`,
                 color,
-                minWidth: 120,
-                zIndex: 5,
+                minWidth: 150,
+                zIndex: 100,
               }}
               placeholder="Type here..."
             />
@@ -883,30 +1012,30 @@ export const DrawingCanvas: React.FC<{ onClose: () => void; isFullscreen?: boole
           {/* stamp label prompt */}
           {stampPrompt && (
             <div
-              className={`absolute z-10 flex flex-col gap-1.5 p-2.5 rounded-lg shadow-xl border ${isDark ? 'bg-[#2d2d2d] border-[#555]' : 'bg-white border-[#ccc]'}`}
+              className="absolute z-[100] flex flex-col gap-3 p-4 glass-panel border border-white/10 shadow-2xl rounded-2xl animate-in fade-in slide-in-from-top-2 w-56"
               style={{
-                left: Math.min((stampPrompt.pos.x + panRef.current.x) * zoomRef.current, (viewRef.current?.width || 300) - 220),
-                top: Math.min((stampPrompt.pos.y + panRef.current.y) * zoomRef.current - 40, (viewRef.current?.height || 300) - 80),
+                left: Math.min((stampPrompt.pos.x + panRef.current.x) * zoomRef.current, (viewRef.current?.width || 300) - 240),
+                top: Math.min((stampPrompt.pos.y + panRef.current.y) * zoomRef.current - 40, (viewRef.current?.height || 300) - 120),
               }}
               onClick={e => e.stopPropagation()}
             >
-              <span className={`text-[10px] font-semibold ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>Label (optional):</span>
+              <span className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-500">Stamp Label</span>
               <input
                 autoFocus
                 value={stampLabel}
                 onChange={e => setStampLabel(e.target.value)}
                 onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter') commitStamp(); if (e.key === 'Escape') { setStampPrompt(null); setStampLabel(''); } }}
-                className={`text-xs px-2 py-1 rounded border outline-none ${isDark ? 'bg-[#1e1e1e] text-white border-[#555] focus:border-blue-500' : 'bg-gray-50 text-black border-[#ccc] focus:border-blue-500'}`}
-                placeholder="Enter label..."
+                className="ethereal-input text-xs h-9 px-3 uppercase tracking-wider font-bold"
+                placeholder="LABEL..."
               />
-              <div className="flex gap-1">
+              <div className="flex gap-2">
                 <button
                   onClick={commitStamp}
-                  className="flex-1 text-[10px] bg-blue-600 text-white px-2 py-1 rounded hover:bg-blue-700 transition-colors"
+                  className="flex-1 h-8 text-[10px] font-black uppercase tracking-widest bg-blue-600 hover:bg-blue-500 text-white rounded-xl shadow-lg shadow-blue-500/20 transition-all"
                 >Place</button>
                 <button
                   onClick={() => { setStampPrompt(null); setStampLabel(''); }}
-                  className={`text-[10px] px-2 py-1 rounded transition-colors ${isDark ? 'bg-[#444] text-gray-300 hover:bg-[#555]' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}
+                  className="flex-1 h-8 text-[10px] font-black uppercase tracking-widest bg-white/5 hover:bg-white/10 text-gray-400 rounded-xl transition-all"
                 >Cancel</button>
               </div>
             </div>
@@ -914,15 +1043,20 @@ export const DrawingCanvas: React.FC<{ onClose: () => void; isFullscreen?: boole
 
           {/* hints */}
           {isStamp && !stampPrompt && (
-            <div className={`absolute bottom-3 left-1/2 -translate-x-1/2 px-3 py-1 rounded-full text-[10px] pointer-events-none ${isDark ? 'bg-[#333] text-gray-400' : 'bg-gray-200 text-gray-600'}`}>
-              <MessageSquare size={10} className="inline mr-1 -mt-0.5" />
-              Click to place — you'll be prompted for a label
+            <div className="absolute bottom-6 left-1/2 -translate-x-1/2 px-5 py-2 glass-card rounded-full text-[10px] font-bold uppercase tracking-widest text-gray-400 animate-bounce pointer-events-none">
+              <MessageSquare size={12} className="inline mr-2 text-blue-400" />
+              Click to place — Label Prompt will follow
             </div>
           )}
 
-          <div className={`absolute bottom-3 right-3 px-2 py-0.5 rounded text-[9px] pointer-events-none ${isDark ? 'bg-[#333]/80 text-gray-500' : 'bg-gray-200/80 text-gray-500'}`}>
-            Ctrl+drag or Space to pan · Ctrl+scroll to zoom
+          <div className="absolute bottom-6 right-6 px-4 py-1.5 glass-panel rounded-full text-[9px] font-bold uppercase tracking-widest text-gray-500 pointer-events-none opacity-50">
+            Ctrl+Drag to Pan · Ctrl+Scroll to Zoom
           </div>
+          {showSplitSuggestion && (
+            <div className="absolute top-6 right-6 px-4 py-2 glass-panel rounded-2xl text-[10px] font-bold uppercase tracking-[0.1em] text-blue-400 border border-blue-500/20 animate-pulse pointer-events-none">
+              Live Pair-Work: Split screen enabled.
+            </div>
+          )}
         </div>
       </div>
     </div>
