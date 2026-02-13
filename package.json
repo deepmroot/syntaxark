@@ -17,7 +17,6 @@
   },
   "dependencies": {
     "@auth/core": "^0.37.4",
-    "@clerk/clerk-react": "^5.60.0",
     "@convex-dev/auth": "^0.0.90",
     "@monaco-editor/react": "^4.7.0",
     "@tailwindcss/vite": "^4.1.18",
