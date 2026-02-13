@@ -2,7 +2,7 @@ import React, { useRef, useEffect } from 'react';
 import Editor, { loader } from '@monaco-editor/react';
 import { useFileSystem } from '../../store/useFileSystem';
 import { useEditor } from '../../store/useEditor';
-import { X, Columns } from 'lucide-react';
+import { X, Columns, Plus } from 'lucide-react';
 import { LANGUAGE_MAP } from '../../data/languages';
 import { Panel, Group, Separator } from 'react-resizable-panels';
 import { FileIcon } from '../Explorer/FileIcon';
@@ -41,7 +41,7 @@ const EditorPane: React.FC<{
   isActivePane: boolean;
   onFocus: () => void;
 }> = ({ fileId, isActivePane, onFocus }) => {
-  const { nodes, updateFileContent, openFileIds, setActiveFile, closeFile } = useFileSystem();
+  const { nodes, updateFileContent, openFileIds, setActiveFile, closeFile, createNode } = useFileSystem();
   const { theme, monacoTheme, editorFont, fontSize, minimap, wordWrap, lineNumbers, bracketPairs, autoComplete, tabSize, smoothScrolling } = useEditor();
   const activeFile = fileId ? nodes[fileId] : null;
   const isDark = theme === 'vs-dark';
@@ -63,6 +63,28 @@ const EditorPane: React.FC<{
       case 'md': return 'markdown';
       default: return 'javascript';
     }
+  };
+
+  const createExampleFile = () => {
+    const ext = 'js';
+    const base = 'main';
+    const rootNames = new Set(
+      Object.values(nodes)
+        .filter((n) => n.parentId === null)
+        .map((n) => n.name.toLowerCase()),
+    );
+
+    let nextName = `${base}.${ext}`;
+    let index = 2;
+    while (rootNames.has(nextName.toLowerCase())) {
+      nextName = `${base}${index}.${ext}`;
+      index += 1;
+    }
+
+    const content = LANGUAGE_MAP[ext]?.template ?? '';
+    const id = createNode(nextName, 'file', null, content);
+    setActiveFile(id);
+    window.dispatchEvent(new CustomEvent('syntaxark:navigate', { detail: { tab: 'explorer' } }));
   };
 
   return (
@@ -149,11 +171,24 @@ const EditorPane: React.FC<{
             }}
           />
         ) : (
-          <div className={`h-full flex items-center justify-center flex-col gap-10 ${isDark ? 'text-gray-600' : 'text-gray-400'}`}>
-            <div className={`w-[500px] h-[500px] rounded-full flex items-center justify-center border-4 transition-all ${isDark ? 'bg-[#252526] border-[#333]' : 'bg-[#f3f3f3] border-[#ddd]'}`}>
-              <img src="/logo.png" className="w-[400px] h-[400px] object-contain opacity-10 grayscale" alt="SyntaxArk" />
+          <div className={`h-full flex items-center justify-center flex-col gap-4 px-6 text-center ${isDark ? 'text-gray-500' : 'text-gray-500'}`}>
+            <div className={`w-28 h-28 rounded-full flex items-center justify-center border transition-all ${isDark ? 'bg-[#252526] border-[#333]' : 'bg-[#f3f3f3] border-[#ddd]'}`}>
+              <img src="/logo.png" className="w-20 h-20 object-contain opacity-40 grayscale" alt="SyntaxArk" />
             </div>
-            <p className="text-2xl font-bold tracking-tight opacity-20" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>SyntaxArk</p>
+            <p className="brand-wordmark text-3xl text-white/80">
+              <span>Syntax</span>
+              <span className="brand-wordmark-accent">Ark</span>
+            </p>
+            <p className="text-xs font-semibold tracking-wide">
+              Create a file and choose a language with the file extension like <code>.js</code>, <code>.ts</code>, or <code>.py</code>.
+            </p>
+            <button
+              onClick={createExampleFile}
+              className="inline-flex items-center gap-2 h-9 px-4 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-bold uppercase tracking-wider transition-colors"
+            >
+              <Plus size={13} />
+              New Example File
+            </button>
           </div>
         )}
       </div>

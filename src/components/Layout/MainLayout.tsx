@@ -42,7 +42,7 @@ export const MainLayout: React.FC = () => {
   const [fullscreenDrawing, setFullscreenDrawing] = useState(false);
   const [showShareModal, setShowShareModal] = useState(false);
   const [copyFeedback, setCopyFeedback] = useState('');
-  const [consoleSizePct, setConsoleSizePct] = useState(30);
+  const [, setConsoleSizePct] = useState(30);
   const consolePanelRef = useRef<PanelImperativeHandle>(null);
 
   const isDark = theme === 'vs-dark';
@@ -56,26 +56,6 @@ export const MainLayout: React.FC = () => {
     }
     setShowConsole(true);
   };
-  const setConsoleSize = (next: number) => {
-    const p = consolePanelRef.current;
-    const clamped = Math.max(0, Math.min(80, next));
-    if (!p) {
-      setShowConsole(clamped > 0.5);
-      setConsoleSizePct(clamped);
-      return;
-    }
-    if (clamped <= 0.5) {
-      p.collapse();
-      setShowConsole(false);
-      setConsoleSizePct(0);
-      return;
-    }
-    p.resize(clamped);
-    setShowConsole(true);
-    setConsoleSizePct(clamped);
-  };
-  const moveConsoleUp = () => setConsoleSize(consoleSizePct + 5);
-  const moveConsoleDown = () => setConsoleSize(consoleSizePct - 5);
 
   useEffect(() => {
     const syncTabFromHash = () => {
@@ -451,7 +431,10 @@ export const MainLayout: React.FC = () => {
               alt="SyntaxArk" 
             />
           </div>
-          <span className={`font-bold text-xl tracking-tight opacity-90 -ml-1 -mt-0.5 ${isDark ? 'text-white' : 'text-gray-900'}`} style={{ fontFamily: "'Space Grotesk', sans-serif" }}>SyntaxArk</span>
+          <span className={`brand-wordmark text-xl -ml-1 -mt-0.5 ${isDark ? 'text-white' : 'text-gray-900'}`}>
+            <span>Syntax</span>
+            <span className="brand-wordmark-accent">Ark</span>
+          </span>
         </div>
 
         <div className="flex items-center gap-4">
@@ -811,27 +794,6 @@ export const MainLayout: React.FC = () => {
             title="Toggle Console (Ctrl+`)"
           >
             <TerminalIcon size={10} /> {showConsole ? 'Hide Console' : 'Show Console'}
-          </button>
-          <button
-            onClick={ensureConsoleVisible}
-            className="flex items-center gap-2 hover:opacity-100 transition-opacity bg-white/10 px-2 py-0.5 rounded-lg border border-white/10"
-            title="Reset Console Height"
-          >
-            Reset Console
-          </button>
-          <button
-            onClick={moveConsoleUp}
-            className="flex items-center gap-2 hover:opacity-100 transition-opacity bg-white/10 px-2 py-0.5 rounded-lg border border-white/10"
-            title="Increase Console Height"
-          >
-            Console Up
-          </button>
-          <button
-            onClick={moveConsoleDown}
-            className="flex items-center gap-2 hover:opacity-100 transition-opacity bg-white/10 px-2 py-0.5 rounded-lg border border-white/10"
-            title="Decrease Console Height"
-          >
-            Console Down
           </button>
           {activeFileId && <div className="tracking-[0.1em] opacity-80 max-w-[28vw] truncate">{nodes[activeFileId]?.name}</div>}
         </div>

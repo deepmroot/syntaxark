@@ -397,7 +397,16 @@ export const Sidebar: React.FC = () => {
           ) : (
             <div className="flex items-center gap-1">
               <button onClick={() => fileInputRef.current?.click()} className="p-1.5 hover:bg-white/5 rounded-lg text-gray-600 hover:text-gray-400 transition-all" title="Upload Source"><Upload size={14} /></button>
-              <button onClick={() => setIsCreatingRoot('file')} className="p-1.5 hover:bg-white/5 rounded-lg text-gray-600 hover:text-blue-400 transition-all" title="New File"><Plus size={14} /></button>
+              <button
+                onClick={() => {
+                  setIsCreatingRoot('file');
+                  setNewName('main.js');
+                }}
+                className="p-1.5 hover:bg-white/5 rounded-lg text-gray-600 hover:text-blue-400 transition-all"
+                title="New File"
+              >
+                <Plus size={14} />
+              </button>
               <button onClick={() => setIsCreatingRoot('folder')} className="p-1.5 hover:bg-white/5 rounded-lg text-gray-600 hover:text-blue-400 transition-all" title="New Folder"><FolderPlus size={14} /></button>
             </div>
           )}

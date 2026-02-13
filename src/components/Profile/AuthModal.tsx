@@ -80,7 +80,7 @@ export const AuthModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
           ? oauthError.message
           : 'OAuth sign-in failed before redirect.';
       setError(
-        `OAuth ${provider} sign-in failed. ${message} Check CONVEX_SITE_URL + SITE_URL in Convex and OAuth callback URLs in provider settings.`
+        `${provider[0].toUpperCase() + provider.slice(1)} sign-in failed. ${message} Verify CONVEX_SITE_URL, SITE_URL, and the OAuth callback URLs in your provider settings.`
       );
     } finally {
       setOauthLoadingProvider(null);
@@ -110,10 +110,10 @@ export const AuthModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
           });
           onClose();
         } else {
-          setError('IDENTIFICATION FAILED: INVALID CREDENTIALS');
+          setError('Invalid email/username or password.');
         }
       } else {
-        if (!usernameValid || !emailValid || !passwordValid) { setError('VALIDATION ERROR: PROTOCOL VIOLATION'); setLoading(false); return; }
+        if (!usernameValid || !emailValid || !passwordValid) { setError('Please fix the highlighted fields and try again.'); setLoading(false); return; }
         const result = await convexSignUp({ username, email, password });
         if (result && 'error' in result) { setError(result.error as string); }
         else if (result?.user) {
@@ -133,7 +133,7 @@ export const AuthModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
           onClose();
         }
       }
-    } catch { setError('NEURAL LINK ERROR: UPLINK FAILED'); }
+    } catch { setError('Sign-in failed. Please try again.'); }
     finally { setLoading(false); }
   };
 
@@ -144,31 +144,32 @@ export const AuthModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   };
 
   return (
-    <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/70 backdrop-blur-xl p-4 animate-in fade-in duration-300">
-      <div className={`w-full max-w-sm rounded-[32px] overflow-hidden shadow-2xl glass-panel animate-in zoom-in-95 duration-300 border-white/10 ${isDark ? 'text-gray-200' : 'text-gray-800'}`}>
+    <div onClick={onClose} className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/70 backdrop-blur-xl p-4 animate-in fade-in duration-300">
+      <div onClick={(e) => e.stopPropagation()} className={`w-full max-w-sm rounded-[28px] overflow-hidden shadow-2xl glass-panel animate-in zoom-in-95 duration-300 border-white/10 ${isDark ? 'text-gray-200' : 'text-gray-800'}`}>
         
-        <div className="p-8">
+        <div className="p-6">
           {/* Header */}
-          <div className="flex flex-col items-center mb-8">
-            <div className="relative mb-4 group">
+          <div className="flex flex-col items-center mb-5">
+            <div className="relative mb-3 group">
               <div className="absolute inset-0 bg-blue-500/20 blur-xl rounded-full animate-pulse" />
-              <img src="/logo.png" alt="SyntaxArk" className="w-20 h-20 object-contain relative z-10 drop-shadow-2xl transition-transform group-hover:scale-110" />
+              <img src="/logo.png" alt="SyntaxArk" className="w-14 h-14 object-contain relative z-10 drop-shadow-2xl transition-transform group-hover:scale-110" />
             </div>
-            <h1 className="text-lg font-black uppercase tracking-[0.3em] text-white">
-              {mode === 'login' ? 'Authentication' : 'Initialization'}
-            </h1>
-            <p className="text-[9px] font-bold text-gray-500 uppercase tracking-widest mt-1">Synchronize Neural Interface</p>
+            <p className="brand-wordmark text-2xl text-white">
+              <span>Syntax</span>
+              <span className="brand-wordmark-accent">Ark</span>
+            </p>
+            <h1 className="text-sm font-bold uppercase tracking-[0.16em] text-gray-300 mt-2">{mode === 'login' ? 'Sign In' : 'Create Account'}</h1>
           </div>
 
           {/* OAuth - High Contrast */}
-          <div className="grid grid-cols-2 gap-3 mb-6">
+          <div className="grid grid-cols-2 gap-2 mb-4">
             <button 
               type="button"
               onClick={() => {
                 void handleOAuthSignIn('google');
               }}
               disabled={Boolean(oauthLoadingProvider)}
-              className="h-11 rounded-xl bg-white/5 border border-white/5 text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-3 hover:bg-white/10 hover:border-white/10 transition-all active:scale-95"
+              className="h-10 rounded-xl bg-white/5 border border-white/5 text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-white/10 hover:border-white/10 transition-all active:scale-95"
             >
               {oauthLoadingProvider === 'google' ? <Loader2 size={14} className="animate-spin" /> : <GoogleIcon />} Google
             </button>
@@ -178,21 +179,21 @@ export const AuthModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
                 void handleOAuthSignIn('github');
               }}
               disabled={Boolean(oauthLoadingProvider)}
-              className="h-11 rounded-xl bg-white/5 border border-white/5 text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-3 hover:bg-white/10 hover:border-white/10 transition-all active:scale-95"
+              className="h-10 rounded-xl bg-white/5 border border-white/5 text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-white/10 hover:border-white/10 transition-all active:scale-95"
             >
               {oauthLoadingProvider === 'github' ? <Loader2 size={14} className="animate-spin" /> : <GitHubIcon />} GitHub
             </button>
           </div>
 
           {/* Divider */}
-          <div className="flex items-center gap-4 mb-6 opacity-30">
+          <div className="flex items-center gap-3 mb-4 opacity-30">
             <div className="flex-1 h-px bg-white/20" />
-            <span className="text-[8px] font-black uppercase tracking-widest text-gray-500">Manual Protocol</span>
+            <span className="text-[9px] font-bold uppercase tracking-widest text-gray-500">Or use email</span>
             <div className="flex-1 h-px bg-white/20" />
           </div>
 
           {error && (
-            <div className="mb-6 p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400 text-[9px] font-black uppercase tracking-widest flex items-center gap-3 animate-in slide-in-from-top-2">
+            <div className="mb-4 p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400 text-[11px] font-semibold tracking-wide flex items-center gap-3 animate-in slide-in-from-top-2">
               <AlertCircle size={14} /> {error}
             </div>
           )}
@@ -200,14 +201,14 @@ export const AuthModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
           <form onSubmit={handleSubmit} className="space-y-4">
             {mode === 'signup' && (
               <div className="space-y-1.5">
-                <label className="text-[9px] font-black uppercase tracking-widest text-gray-600 ml-1">Entity Identifier</label>
+                <label className="text-[10px] font-bold uppercase tracking-wider text-gray-500 ml-1">Username</label>
                 <div className="relative">
                   <User size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-600" />
                   <input
-                    type="text" placeholder="USERNAME" value={username}
+                    type="text" placeholder="Enter username" value={username}
                     onChange={(e) => setUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, ''))}
                     required minLength={3} maxLength={20}
-                    className="ethereal-input w-full h-11 pl-10 pr-10 text-xs font-bold uppercase tracking-wider"
+                    className="ethereal-input w-full h-11 pl-10 pr-10 text-sm font-medium tracking-wide"
                   />
                   <div className="absolute right-3 top-1/2 -translate-y-1/2"><ValidationIcon valid={usernameValid} checking={checkingUsername} /></div>
                 </div>
@@ -215,26 +216,26 @@ export const AuthModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
             )}
 
             <div className="space-y-1.5">
-              <label className="text-[9px] font-black uppercase tracking-widest text-gray-600 ml-1">Comms Frequency</label>
+              <label className="text-[10px] font-bold uppercase tracking-wider text-gray-500 ml-1">{mode === 'login' ? 'Email or Username' : 'Email Address'}</label>
               <div className="relative">
                 <Mail size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-600" />
                 <input
-                  type={mode === 'login' ? 'text' : 'email'} placeholder={mode === 'login' ? 'EMAIL OR USERNAME' : 'EMAIL ADDRESS'} value={email}
+                  type={mode === 'login' ? 'text' : 'email'} placeholder={mode === 'login' ? 'Enter email or username' : 'name@company.com'} value={email}
                   onChange={(e) => setEmail(e.target.value)} required
-                  className="ethereal-input w-full h-11 pl-10 pr-10 text-xs font-bold uppercase tracking-wider"
+                  className="ethereal-input w-full h-11 pl-10 pr-10 text-sm font-medium tracking-wide"
                 />
                 {mode === 'signup' && <div className="absolute right-3 top-1/2 -translate-y-1/2"><ValidationIcon valid={emailValid} checking={checkingEmail} /></div>}
               </div>
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-[9px] font-black uppercase tracking-widest text-gray-600 ml-1">Access Cipher</label>
+              <label className="text-[10px] font-bold uppercase tracking-wider text-gray-500 ml-1">Password</label>
               <div className="relative">
                 <Lock size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-600" />
                 <input
-                  type={showPassword ? 'text' : 'password'} placeholder="••••••••" value={password}
+                  type={showPassword ? 'text' : 'password'} placeholder="Enter password" value={password}
                   onChange={(e) => setPassword(e.target.value)} required minLength={6}
-                  className="ethereal-input w-full h-11 pl-10 pr-12 text-xs font-bold"
+                  className="ethereal-input w-full h-11 pl-10 pr-12 text-sm font-medium"
                 />
                 <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-2">
                   {mode === 'signup' && <ValidationIcon valid={passwordValid} />}
@@ -245,24 +246,24 @@ export const AuthModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
               </div>
             </div>
 
-            <button 
+            <button
               type="submit" disabled={loading || (mode === 'signup' && (!usernameValid || !emailValid || !passwordValid))}
-              className="w-full h-12 bg-blue-600 hover:bg-blue-500 text-white rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] shadow-[0_0_25px_rgba(37,99,235,0.3)] transition-all flex items-center justify-center gap-3 disabled:opacity-20 active:scale-95 mt-4"
+              className="w-full h-11 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-[10px] font-black uppercase tracking-[0.16em] shadow-[0_0_20px_rgba(37,99,235,0.25)] transition-all flex items-center justify-center gap-2 disabled:opacity-20 active:scale-95 mt-2"
             >
-              {loading ? <Loader2 size={16} className="animate-spin" /> : (mode === 'login' ? 'ESTABLISH LINK' : 'INITIALIZE NODE')}
+              {loading ? <Loader2 size={16} className="animate-spin" /> : (mode === 'login' ? 'Sign In' : 'Create Account')}
             </button>
           </form>
 
           <button 
             onClick={() => { loginAsGuest(); onClose(); }}
-            className="w-full h-11 rounded-xl bg-white/5 border border-white/5 text-[9px] font-black uppercase tracking-widest text-gray-500 hover:text-white hover:bg-white/10 transition-all flex items-center justify-center gap-3 mt-3"
+            className="w-full h-10 rounded-xl bg-white/5 border border-white/5 text-[10px] font-semibold uppercase tracking-wider text-gray-400 hover:text-white hover:bg-white/10 transition-all flex items-center justify-center gap-2 mt-2"
           >
-            <Ghost size={14} /> Continue as Anonymous Ghost
+            <Ghost size={14} /> Continue as Guest
           </button>
 
-          <div className="mt-8 pt-6 border-t border-white/5 text-center">
-            <button onClick={() => { setMode(mode === 'login' ? 'signup' : 'login'); setError(''); }} className="text-[9px] font-black uppercase tracking-[0.2em] text-gray-600 hover:text-blue-400 transition-colors">
-              {mode === 'login' ? "Initialize New Entity Protocol" : "Back to Authentication Protocol"}
+          <div className="mt-4 pt-4 border-t border-white/5 text-center">
+            <button onClick={() => { setMode(mode === 'login' ? 'signup' : 'login'); setError(''); }} className="text-[10px] font-semibold uppercase tracking-[0.14em] text-gray-500 hover:text-blue-400 transition-colors">
+              {mode === 'login' ? "Don't have an account? Create one" : 'Already have an account? Sign in'}
             </button>
           </div>
         </div>

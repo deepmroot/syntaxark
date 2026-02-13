@@ -4,6 +4,16 @@ import { LANGUAGE_MAP } from '../data/languages';
 export class RemoteRunner implements ILanguageRunner {
   private sqlJsInitPromise: Promise<any> | null = null;
 
+  private withRustDependencyHint(extension: string, stderr: string): string {
+    if (extension !== 'rs') return stderr;
+    const missingCrate =
+      /unresolved import|undeclared crate|can't find crate|failed to resolve: use of undeclared crate/i.test(stderr);
+    if (!missingCrate) return stderr;
+    const hint =
+      '\n\nHint: Remote Rust execution uses single-file rustc (no Cargo.toml), so external crates (for example `rand`) are not available.';
+    return stderr.includes('single-file rustc') ? stderr : `${stderr}${hint}`;
+  }
+
   private async getSqlJs() {
     if (!this.sqlJsInitPromise) {
       this.sqlJsInitPromise = (async () => {
@@ -167,12 +177,15 @@ class Main {
       const end = performance.now();
 
       if (result.run) {
+        const normalizedStderr = result.run.stderr
+          ? this.withRustDependencyHint(extension, result.run.stderr)
+          : '';
         if (result.run.stdout) onLog('log', [result.run.stdout]);
-        if (result.run.stderr) onLog('error', [result.run.stderr]);
+        if (normalizedStderr) onLog('error', [normalizedStderr]);
         
         return {
           stdout: result.run.stdout ? [result.run.stdout] : [],
-          stderr: result.run.stderr ? [result.run.stderr] : [],
+          stderr: normalizedStderr ? [normalizedStderr] : [],
           duration: end - start,
           error: result.run.code !== 0 ? 'Execution failed' : undefined
         };

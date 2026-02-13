@@ -1,3 +1,4 @@
+@import url("https://fonts.googleapis.com/css2?family=Sora:wght@600;700;800&display=swap");
 @import "tailwindcss";
 
 @theme {
@@ -194,4 +195,19 @@ body {
 
 .monaco-editor {
   padding-top: 8px;
+}
+
+.brand-wordmark {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0;
+  font-family: "Sora", "Space Grotesk", "Segoe UI", sans-serif;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1;
+}
+
+.brand-wordmark-accent {
+  color: #60a5fa;
+  text-shadow: 0 0 18px rgba(59, 130, 246, 0.45);
 }
