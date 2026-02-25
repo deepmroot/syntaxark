@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Copy, LogOut, MessageSquare, Paintbrush, Plus, Send, Users, Wifi, WifiOff } from 'lucide-react';
+import { Copy, LogOut, Maximize2, MessageSquare, Minimize2, Paintbrush, Plus, Send, Users, Wifi, WifiOff } from 'lucide-react';
 import { useMutation, useQuery } from 'convex/react';
 import { api } from '../../../convex/_generated/api';
 import type { Id } from '../../../convex/_generated/dataModel';
@@ -7,6 +7,7 @@ import { useEditor } from '../../store/useEditor';
 import { useAuth } from '../../store/useAuth';
 import { useCollabSession } from '../../store/useCollabSession';
 import { DrawingCanvas } from '../Drawing/DrawingCanvas';
+import { WHITEBOARD_COMPACT_BREAKPOINTS } from '../../config/whiteboard';
 
 type Participant = {
   _id: string;
@@ -48,6 +49,9 @@ export const CollaboratePanel: React.FC = () => {
   const [feedback, setFeedback] = useState('');
   const [busy, setBusy] = useState<'create' | 'join' | 'leave' | ''>('');
   const [showBoard, setShowBoard] = useState(false);
+  const [boardMode, setBoardMode] = useState<'room' | 'local'>('room');
+  const [boardExpanded, setBoardExpanded] = useState(false);
+  const [boardFullscreen, setBoardFullscreen] = useState(false);
   const [isSharingBoard, setIsSharingBoard] = useState(true);
   const [messageDraft, setMessageDraft] = useState('');
   const snapshotVersionRef = useRef(0);
@@ -223,6 +227,7 @@ export const CollaboratePanel: React.FC = () => {
 
   const onBoardCursor = (x: number, y: number) => {
     if (!roomId || !user) return;
+    if (boardMode !== 'room') return;
     if (!roomIdArg || !userIdArg) return;
     const now = Date.now();
     if (now - lastCursorSendRef.current < 80) return;
@@ -320,38 +325,88 @@ export const CollaboratePanel: React.FC = () => {
               <Paintbrush size={13} />
               Whiteboard
             </div>
-            <button
-              onClick={() => setShowBoard((prev) => !prev)}
-              className={`text-[10px] px-2 py-1 rounded border ${isDark ? 'border-white/10 hover:bg-white/5' : 'border-gray-300 hover:bg-gray-100'}`}
-            >
-              {showBoard ? 'Hide' : 'Open'}
-            </button>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setBoardMode('room')}
+                className={`text-[10px] px-2 py-1 rounded border ${
+                  boardMode === 'room'
+                    ? (isDark ? 'border-blue-500/40 bg-blue-500/15 text-blue-300' : 'border-blue-400 bg-blue-50 text-blue-700')
+                    : (isDark ? 'border-white/10 hover:bg-white/5' : 'border-gray-300 hover:bg-gray-100')
+                }`}
+                title="Work on shared room whiteboard"
+              >
+                Room
+              </button>
+              <button
+                onClick={() => setBoardMode('local')}
+                className={`text-[10px] px-2 py-1 rounded border ${
+                  boardMode === 'local'
+                    ? (isDark ? 'border-blue-500/40 bg-blue-500/15 text-blue-300' : 'border-blue-400 bg-blue-50 text-blue-700')
+                    : (isDark ? 'border-white/10 hover:bg-white/5' : 'border-gray-300 hover:bg-gray-100')
+                }`}
+                title="Work on your private local whiteboard"
+              >
+                Local
+              </button>
+              <button
+                onClick={() => setBoardExpanded((prev) => !prev)}
+                disabled={!showBoard}
+                className={`text-[10px] px-2 py-1 rounded border ${isDark ? 'border-white/10 hover:bg-white/5' : 'border-gray-300 hover:bg-gray-100'} disabled:opacity-40`}
+                title={boardExpanded ? 'Collapse whiteboard' : 'Expand whiteboard'}
+              >
+                {boardExpanded ? 'Collapse' : 'Expand'}
+              </button>
+              <button
+                onClick={() => setShowBoard((prev) => !prev)}
+                className={`text-[10px] px-2 py-1 rounded border ${isDark ? 'border-white/10 hover:bg-white/5' : 'border-gray-300 hover:bg-gray-100'}`}
+              >
+                {showBoard ? 'Hide' : 'Open'}
+              </button>
+            </div>
           </div>
           {showBoard && (
             <div className="p-2 space-y-2">
               <div className="flex items-center justify-between text-[10px]">
-                <span className="opacity-70">{canEditBoard ? 'You can edit' : 'View only'}</span>
-                <label className="flex items-center gap-1 opacity-80">
-                  <input
-                    type="checkbox"
-                    checked={isSharingBoard}
-                    onChange={(e) => setIsSharingBoard(e.target.checked)}
-                    className="accent-blue-500"
-                  />
-                  Share cursor
-                </label>
+                <span className="opacity-70">
+                  {boardMode === 'room'
+                    ? (canEditBoard ? 'Room board: you can edit' : 'Room board: view only')
+                    : 'Local board: private session'}
+                </span>
+                <div className="flex items-center gap-2">
+                  {boardMode === 'room' && (
+                    <label className="flex items-center gap-1 opacity-80">
+                      <input
+                        type="checkbox"
+                        checked={isSharingBoard}
+                        onChange={(e) => setIsSharingBoard(e.target.checked)}
+                        className="accent-blue-500"
+                      />
+                      Share cursor
+                    </label>
+                  )}
+                  <button
+                    onClick={() => setBoardFullscreen(true)}
+                    className={`h-7 w-7 rounded border inline-flex items-center justify-center ${isDark ? 'border-white/10 hover:bg-white/5' : 'border-gray-300 hover:bg-gray-100'}`}
+                    title="Open whiteboard fullscreen"
+                  >
+                    <Maximize2 size={12} />
+                  </button>
+                </div>
               </div>
-              <div className="h-64 rounded-md overflow-hidden border border-white/10">
+              <div className={`${boardExpanded ? 'h-[68vh]' : 'h-64'} rounded-md overflow-hidden border border-white/10`}>
                 <DrawingCanvas
                   onClose={() => setShowBoard(false)}
-                  canEdit={canEditBoard}
-                  initialSnapshot={whiteboard?.snapshot || null}
-                  snapshotVersion={whiteboard?.updatedAt || 0}
-                  snapshotUpdatedBy={whiteboard?.updatedBy ? String(whiteboard.updatedBy) : undefined}
-                  localUserId={user?.id}
-                  onSnapshotChange={onBoardSnapshot}
-                  onCursorMove={onBoardCursor}
-                  remoteCursors={remoteCursors}
+                  onFullscreen={() => setBoardFullscreen(true)}
+                  canEdit={boardMode === 'room' ? canEditBoard : true}
+                  initialSnapshot={boardMode === 'room' ? (whiteboard?.snapshot || null) : null}
+                  snapshotVersion={boardMode === 'room' ? (whiteboard?.updatedAt || 0) : 0}
+                  snapshotUpdatedBy={boardMode === 'room' ? (whiteboard?.updatedBy ? String(whiteboard.updatedBy) : undefined) : undefined}
+                  localUserId={boardMode === 'room' ? user?.id : undefined}
+                  onSnapshotChange={boardMode === 'room' ? onBoardSnapshot : undefined}
+                  onCursorMove={boardMode === 'room' ? onBoardCursor : undefined}
+                  remoteCursors={boardMode === 'room' ? remoteCursors : []}
+                  desktopCompactBreakpoint={WHITEBOARD_COMPACT_BREAKPOINTS.collaborateEmbedded.desktop}
+                  mobileCompactBreakpoint={WHITEBOARD_COMPACT_BREAKPOINTS.collaborateEmbedded.mobile}
                 />
               </div>
             </div>
@@ -432,6 +487,40 @@ export const CollaboratePanel: React.FC = () => {
       <div className={`px-4 py-2 text-[10px] border-t ${isDark ? 'border-white/10 bg-black/20 text-gray-500' : 'border-gray-200 bg-white/70 text-gray-500'}`}>
         {roomId && room ? 'Connected to active room' : 'Create or join a room to start collaborating'}
       </div>
+
+      {boardFullscreen && (
+        <div className="fixed inset-0 z-[2000] flex flex-col">
+          <div className={`h-9 shrink-0 px-3 flex items-center justify-between border-b ${isDark ? 'bg-[#0f141c] border-white/10 text-gray-300' : 'bg-white border-gray-200 text-gray-700'}`}>
+            <div className="text-[11px] font-semibold">
+              {boardMode === 'room' ? `Room Whiteboard ${roomCode ? `(${roomCode})` : ''}` : 'Local Whiteboard'}
+            </div>
+            <button
+              onClick={() => setBoardFullscreen(false)}
+              className={`h-7 px-2 rounded border text-[10px] inline-flex items-center gap-1 ${isDark ? 'border-white/10 hover:bg-white/5' : 'border-gray-300 hover:bg-gray-100'}`}
+            >
+              <Minimize2 size={12} />
+              Exit Fullscreen
+            </button>
+          </div>
+          <div className={`flex-1 ${isDark ? 'bg-[#1e1e1e]' : 'bg-white'}`}>
+            <DrawingCanvas
+              onClose={() => setBoardFullscreen(false)}
+              isFullscreen={true}
+              onFullscreen={() => setBoardFullscreen(false)}
+              canEdit={boardMode === 'room' ? canEditBoard : true}
+              initialSnapshot={boardMode === 'room' ? (whiteboard?.snapshot || null) : null}
+              snapshotVersion={boardMode === 'room' ? (whiteboard?.updatedAt || 0) : 0}
+              snapshotUpdatedBy={boardMode === 'room' ? (whiteboard?.updatedBy ? String(whiteboard.updatedBy) : undefined) : undefined}
+              localUserId={boardMode === 'room' ? user?.id : undefined}
+              onSnapshotChange={boardMode === 'room' ? onBoardSnapshot : undefined}
+              onCursorMove={boardMode === 'room' ? onBoardCursor : undefined}
+              remoteCursors={boardMode === 'room' ? remoteCursors : []}
+              desktopCompactBreakpoint={WHITEBOARD_COMPACT_BREAKPOINTS.fullscreen.desktop}
+              mobileCompactBreakpoint={WHITEBOARD_COMPACT_BREAKPOINTS.fullscreen.mobile}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 };

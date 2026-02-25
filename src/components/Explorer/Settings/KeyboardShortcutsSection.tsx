@@ -15,9 +15,13 @@ const SHORTCUTS: [string, string][] = [
   ['Ctrl + T', 'Toggle Console'],
   ['Ctrl + S', 'Save (auto-saved)'],
   ['Ctrl + Shift + P', 'Keyboard Shortcuts'],
+  ['Ctrl/Cmd + Z (in drawing)', 'Undo'],
+  ['Ctrl/Cmd + Y or Shift + Z (in drawing)', 'Redo'],
   ['Space (in drawing)', 'Toggle Hand Tool'],
   ['Ctrl + drag (in drawing)', 'Pan Canvas'],
   ['Ctrl + scroll (in drawing)', 'Zoom Canvas'],
+  ['Ctrl/Cmd + 0 (in drawing)', 'Reset View'],
+  ['Ctrl/Cmd + F (in drawing)', 'Toggle Fullscreen'],
   ['Escape', 'Close Dialogs'],
 ];
 

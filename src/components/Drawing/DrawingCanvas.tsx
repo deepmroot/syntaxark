@@ -1,12 +1,13 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react';
 import { useEditor } from '../../store/useEditor';
+import { WHITEBOARD_COMPACT_BREAKPOINTS } from '../../config/whiteboard';
 import {
   Pencil, Pen, Highlighter, Eraser, Square, Circle, Minus, Type,
-  Undo2, Redo2, Trash2, Download, PaintBucket, MousePointer,
+  Undo2, Redo2, Trash2, Download, PaintBucket, MousePointer, RotateCcw,
   Triangle, Star, ArrowRight, Diamond, Pipette, X as XIcon,
   Grid3X3, StickyNote, Database, Server, Cloud, Hexagon,
   GitBranch, Workflow, Monitor, MessageSquare, Hand,
-  ZoomIn, ZoomOut, Maximize, Minimize2,
+  ZoomIn, ZoomOut, Maximize, Minimize2, SlidersHorizontal, Palette, LocateFixed,
 } from 'lucide-react';
 
 /* ─────────────────── types ─────────────────── */
@@ -19,6 +20,16 @@ type Tool =
   | 'stamp-cloud' | 'stamp-note' | 'stamp-actor' | 'stamp-process';
 
 interface Point { x: number; y: number }
+interface TextObject {
+  id: string;
+  text: string;
+  x: number;
+  y: number;
+  color: string;
+  size: number;
+  opacity: number;
+}
+type AssistLevel = 'off' | 'low' | 'medium' | 'high';
 interface RemoteCursor {
   userId: string;
   username: string;
@@ -32,6 +43,7 @@ interface RemoteCursor {
 
 const CANVAS_W = 4000;
 const CANVAS_H = 4000;
+const EDGE_REBASE_MARGIN = 280;
 
 let _savedImageData: ImageData | null = null;
 let _savedUndos: ImageData[] = [];
@@ -60,6 +72,56 @@ function diamondPath(ctx: CanvasRenderingContext2D, cx: number, cy: number, w: n
   ctx.lineTo(cx, cy + h / 2);
   ctx.lineTo(cx - w / 2, cy);
   ctx.closePath();
+}
+
+function hslToHex(h: number, s: number, l: number) {
+  const hh = ((h % 360) + 360) % 360;
+  const ss = Math.max(0, Math.min(100, s)) / 100;
+  const ll = Math.max(0, Math.min(100, l)) / 100;
+  const c = (1 - Math.abs(2 * ll - 1)) * ss;
+  const x = c * (1 - Math.abs((hh / 60) % 2 - 1));
+  const m = ll - c / 2;
+  let r = 0, g = 0, b = 0;
+
+  if (hh < 60) [r, g, b] = [c, x, 0];
+  else if (hh < 120) [r, g, b] = [x, c, 0];
+  else if (hh < 180) [r, g, b] = [0, c, x];
+  else if (hh < 240) [r, g, b] = [0, x, c];
+  else if (hh < 300) [r, g, b] = [x, 0, c];
+  else [r, g, b] = [c, 0, x];
+
+  const toHex = (v: number) => Math.round((v + m) * 255).toString(16).padStart(2, '0');
+  return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+}
+
+function drawTextObject(ctx: CanvasRenderingContext2D, t: TextObject) {
+  ctx.save();
+  ctx.font = `${t.size * 4 + 14}px sans-serif`;
+  ctx.fillStyle = t.color;
+  ctx.globalAlpha = t.opacity / 100;
+  ctx.fillText(t.text, t.x, t.y);
+  ctx.restore();
+}
+
+function hexToHsl(hex: string) {
+  const clean = hex.replace('#', '');
+  const r = parseInt(clean.slice(0, 2), 16) / 255;
+  const g = parseInt(clean.slice(2, 4), 16) / 255;
+  const b = parseInt(clean.slice(4, 6), 16) / 255;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const d = max - min;
+  let h = 0;
+  const l = (max + min) / 2;
+  const s = d === 0 ? 0 : d / (1 - Math.abs(2 * l - 1));
+
+  if (d !== 0) {
+    if (max === r) h = ((g - b) / d) % 6;
+    else if (max === g) h = (b - r) / d + 2;
+    else h = (r - g) / d + 4;
+    h *= 60;
+  }
+  return { h: (h + 360) % 360, s: s * 100, l: l * 100 };
 }
 
 /* ─── draw a diagram stamp ─── */
@@ -211,22 +273,22 @@ function drawStamp(ctx: CanvasRenderingContext2D, tool: Tool, x: number, y: numb
 
 const Btn: React.FC<{
   active?: boolean; onClick: () => void; title: string;
-  children: React.ReactNode; isDark: boolean; className?: string;
-}> = ({ active, onClick, title, children, isDark, className = '' }) => (
+  children: React.ReactNode; isDark: boolean; className?: string; disabled?: boolean;
+}> = ({ active, onClick, title, children, isDark, className = '', disabled = false }) => (
   <button
-    onClick={onClick} title={title}
+    onClick={onClick} title={title} disabled={disabled}
     className={`p-2 rounded-xl transition-all duration-200 flex items-center justify-center border ${
       active 
         ? 'bg-blue-600/20 text-blue-400 border-blue-500/30 shadow-[0_0_15px_rgba(59,130,246,0.3)]'
         : isDark 
           ? 'text-gray-500 border-transparent hover:text-gray-300 hover:bg-white/5 hover:border-white/5'
           : 'text-gray-600 border-transparent hover:text-black hover:bg-black/5 hover:border-black/5'
-    } ${className}`}
+    } disabled:opacity-40 disabled:cursor-not-allowed ${className}`}
   >{children}</button>
 );
 
-const SectionLabel: React.FC<{ label: string; isDark: boolean }> = ({ label, isDark }) => (
-  <div className={`text-[8px] font-black uppercase tracking-[0.2em] px-1 pt-4 pb-1 select-none ${isDark ? 'text-gray-600' : 'text-gray-400'}`}>
+const SectionLabel: React.FC<{ label: string; isDark: boolean; compact?: boolean }> = ({ label, isDark, compact = false }) => (
+  <div className={`text-[8px] font-black uppercase tracking-[0.16em] px-1 ${compact ? 'pt-2 pb-1' : 'pt-4 pb-1'} select-none ${isDark ? 'text-gray-600' : 'text-gray-400'}`}>
     {label}
   </div>
 );
@@ -250,6 +312,8 @@ export const DrawingCanvas: React.FC<{
   onCursorMove?: (x: number, y: number) => void;
   remoteCursors?: RemoteCursor[];
   showSplitSuggestion?: boolean;
+  desktopCompactBreakpoint?: number;
+  mobileCompactBreakpoint?: number;
 }> = ({
   onClose,
   isFullscreen,
@@ -263,6 +327,8 @@ export const DrawingCanvas: React.FC<{
   onCursorMove,
   remoteCursors = [],
   showSplitSuggestion = false,
+  desktopCompactBreakpoint = WHITEBOARD_COMPACT_BREAKPOINTS.default.desktop,
+  mobileCompactBreakpoint = WHITEBOARD_COMPACT_BREAKPOINTS.default.mobile,
 }) => {
   const { theme } = useEditor();
   const isDark = theme === 'vs-dark';
@@ -282,12 +348,30 @@ export const DrawingCanvas: React.FC<{
   const [opacity, setOpacity] = useState(100);
   const [doFill, setDoFill] = useState(false);
   const [showGrid, setShowGrid] = useState(false);
+  const [assistLevel, setAssistLevel] = useState<AssistLevel>('low');
 
   const [drawing, setDrawing] = useState(false);
   const [panning, setPanning] = useState(false);
+  const [isCompactUI, setIsCompactUI] = useState(false);
+  const [showCompactControls, setShowCompactControls] = useState(false);
+  const [showTopStylePanel, setShowTopStylePanel] = useState(false);
+  const [showCompactMixer, setShowCompactMixer] = useState(false);
+  const [paletteTarget, setPaletteTarget] = useState<'stroke' | 'fill'>('stroke');
+  const [paletteHue, setPaletteHue] = useState(220);
+  const [paletteSat, setPaletteSat] = useState(100);
+  const [paletteLight, setPaletteLight] = useState(50);
+  const paletteRef = useRef<HTMLDivElement>(null);
   const [origin, setOrigin] = useState<Point | null>(null);
   const [textPos, setTextPos] = useState<Point | null>(null);
   const [textVal, setTextVal] = useState('');
+  const textInputRef = useRef<HTMLInputElement>(null);
+  const [textObjects, setTextObjects] = useState<TextObject[]>([]);
+  const textObjectsRef = useRef<TextObject[]>([]);
+  const movingTextIdRef = useRef<string | null>(null);
+  const textMoveOffsetRef = useRef<Point>({ x: 0, y: 0 });
+  const [draggingTextDraft, setDraggingTextDraft] = useState(false);
+  const textDragOffsetRef = useRef<Point>({ x: 0, y: 0 });
+  const [fullscreenToolSection, setFullscreenToolSection] = useState<'draw' | 'shape' | 'dev' | 'extra'>('draw');
 
   /* stamp label prompt */
   const [stampPrompt, setStampPrompt] = useState<{ tool: Tool; pos: Point } | null>(null);
@@ -306,6 +390,8 @@ export const DrawingCanvas: React.FC<{
   const redos = useRef<ImageData[]>([..._savedRedos]);
   const initDone = useRef(false);
   const lastMouseRef = useRef<Point>({ x: 0, y: 0 });
+  const assistPrevPointRef = useRef<Point | null>(null);
+  const assistSmoothPointRef = useRef<Point | null>(null);
   const snapshotDebounceRef = useRef<number | null>(null);
   const lastSnapshotSentRef = useRef('');
   const lastAppliedSnapshotVersionRef = useRef<number>(0);
@@ -313,7 +399,23 @@ export const DrawingCanvas: React.FC<{
 
   const isStamp = (tool as string).startsWith('stamp-');
   const isFree = ['pencil', 'pen', 'marker', 'eraser'].includes(tool);
+  const isAssistableFree = ['pencil', 'pen', 'marker'].includes(tool) && assistLevel !== 'off';
   const isShp = ['line', 'rectangle', 'circle', 'triangle', 'diamond', 'star', 'arrow'].includes(tool);
+
+  const assistCfg: Record<AssistLevel, { alpha: number; jump: number }> = {
+    off: { alpha: 1, jump: 48 },
+    low: { alpha: 0.7, jump: 52 },
+    medium: { alpha: 0.5, jump: 48 },
+    high: { alpha: 0.3, jump: 44 },
+  };
+  const assistOptions: AssistLevel[] = ['off', 'low', 'medium', 'high'];
+  const assistLabel = assistLevel === 'off' ? 'Off' : assistLevel[0].toUpperCase() + assistLevel.slice(1);
+  const cycleAssistLevel = () =>
+    setAssistLevel((prev) => (prev === 'off' ? 'low' : prev === 'low' ? 'medium' : prev === 'medium' ? 'high' : 'off'));
+
+  useEffect(() => {
+    textObjectsRef.current = textObjects;
+  }, [textObjects]);
 
   /* ─── convert screen coords to canvas coords ─── */
   const toCanvas = useCallback((screenX: number, screenY: number): Point => {
@@ -341,6 +443,7 @@ export const DrawingCanvas: React.FC<{
     vctx.scale(zoomRef.current, zoomRef.current);
     vctx.translate(panRef.current.x, panRef.current.y);
     vctx.drawImage(src, 0, 0);
+    textObjectsRef.current.forEach((t) => drawTextObject(vctx, t));
     vctx.restore();
 
     // grid
@@ -382,6 +485,10 @@ export const DrawingCanvas: React.FC<{
       vctx.restore();
     });
   }, [bgColor, isDark, showGrid, remoteCursors]);
+
+  useEffect(() => {
+    renderView();
+  }, [textObjects, renderView]);
 
   /* ─── init big canvas + restore state ─── */
   useEffect(() => {
@@ -427,6 +534,7 @@ export const DrawingCanvas: React.FC<{
       ctx.fillStyle = bgColor;
       ctx.fillRect(0, 0, c.width, c.height);
       ctx.drawImage(img, 0, 0, c.width, c.height);
+      setTextObjects([]);
       const snapshot = ctx.getImageData(0, 0, c.width, c.height);
       undos.current = [snapshot];
       redos.current = [];
@@ -447,6 +555,14 @@ export const DrawingCanvas: React.FC<{
       const w = wrap.clientWidth;
       const h = wrap.clientHeight;
       if (w === 0 || h === 0) return;
+      const isMobileViewport =
+        typeof window !== 'undefined' &&
+        (window.innerWidth <= 900 || window.matchMedia('(pointer: coarse)').matches);
+      const compact = w < (isMobileViewport ? mobileCompactBreakpoint : desktopCompactBreakpoint);
+      setIsCompactUI(compact);
+      if (!compact) {
+        setShowCompactControls(false);
+      }
       view.width = w; view.height = h;
       overlay.width = w; overlay.height = h;
       renderView();
@@ -455,10 +571,34 @@ export const DrawingCanvas: React.FC<{
     const ro = new ResizeObserver(fit);
     ro.observe(wrap);
     return () => ro.disconnect();
-  }, [renderView]);
+  }, [renderView, desktopCompactBreakpoint, mobileCompactBreakpoint]);
 
   /* re-render on pan/zoom/grid changes */
   useEffect(() => { renderView(); }, [pan, zoom, showGrid, renderView]);
+
+  const buildMergedSnapshot = useCallback(() => {
+    const base = canvasRef.current;
+    if (!base) return null;
+    const temp = document.createElement('canvas');
+    temp.width = base.width;
+    temp.height = base.height;
+    const tctx = temp.getContext('2d');
+    if (!tctx) return null;
+    tctx.drawImage(base, 0, 0);
+    textObjectsRef.current.forEach((t) => drawTextObject(tctx, t));
+    return temp.toDataURL('image/png');
+  }, []);
+
+  const emitSnapshotChange = useCallback(() => {
+    if (!onSnapshotChange) return;
+    if (snapshotDebounceRef.current) window.clearTimeout(snapshotDebounceRef.current);
+    snapshotDebounceRef.current = window.setTimeout(() => {
+      const snapshot = buildMergedSnapshot();
+      if (!snapshot || snapshot === lastSnapshotSentRef.current) return;
+      lastSnapshotSentRef.current = snapshot;
+      onSnapshotChange(snapshot);
+    }, 300);
+  }, [onSnapshotChange, buildMergedSnapshot]);
 
   /* ─── save state on unmount ─── */
   useEffect(() => {
@@ -483,16 +623,8 @@ export const DrawingCanvas: React.FC<{
     redos.current = [];
     lastLocalDrawAtRef.current = Date.now();
     renderView();
-    if (onSnapshotChange) {
-      if (snapshotDebounceRef.current) window.clearTimeout(snapshotDebounceRef.current);
-      snapshotDebounceRef.current = window.setTimeout(() => {
-        const snapshot = canvasRef.current?.toDataURL('image/png');
-        if (!snapshot || snapshot === lastSnapshotSentRef.current) return;
-        lastSnapshotSentRef.current = snapshot;
-        onSnapshotChange(snapshot);
-      }, 350);
-    }
-  }, [onSnapshotChange, renderView]);
+    emitSnapshotChange();
+  }, [emitSnapshotChange, renderView]);
 
   const undo = useCallback(() => {
     const c = canvasRef.current;
@@ -526,8 +658,22 @@ export const DrawingCanvas: React.FC<{
     const onKey = (e: KeyboardEvent) => {
       if (isEditableTarget(e.target)) return;
       if (e.key === 'Control') ctrlHeld.current = true;
-      if (e.ctrlKey && e.key === 'z') { e.preventDefault(); undo(); }
-      if (e.ctrlKey && e.key === 'y') { e.preventDefault(); redo(); }
+      const key = e.key.toLowerCase();
+      const mod = e.ctrlKey || e.metaKey;
+      if (mod && key === 'z' && !e.shiftKey) { e.preventDefault(); undo(); }
+      if (mod && (key === 'y' || (key === 'z' && e.shiftKey))) { e.preventDefault(); redo(); }
+      if (mod && key === '0') {
+        e.preventDefault();
+        const view = viewRef.current;
+        if (view) {
+          zoomRef.current = 1;
+          const newPan = { x: -CANVAS_W / 2 + view.width / 2, y: -CANVAS_H / 2 + view.height / 2 };
+          panRef.current = newPan;
+          setZoom(1);
+          setPan(newPan);
+        }
+      }
+      if (mod && key === 'f' && onFullscreen) { e.preventDefault(); onFullscreen(); }
       if (e.key === ' ') { e.preventDefault(); setTool(prev => prev === 'hand' ? 'pencil' : 'hand'); }
     };
     const onKeyUp = (e: KeyboardEvent) => {
@@ -536,7 +682,7 @@ export const DrawingCanvas: React.FC<{
     window.addEventListener('keydown', onKey);
     window.addEventListener('keyup', onKeyUp);
     return () => { window.removeEventListener('keydown', onKey); window.removeEventListener('keyup', onKeyUp); };
-  }, [undo, redo]);
+  }, [undo, redo, onFullscreen]);
 
   /* ─── zoom helper ─── */
   const doZoom = useCallback((delta: number, centerX?: number, centerY?: number) => {
@@ -549,15 +695,54 @@ export const DrawingCanvas: React.FC<{
     const oldZ = zoomRef.current;
     const newZ = Math.max(0.1, Math.min(5, oldZ + delta));
 
-    // adjust pan so zoom centers on mouse
-    const newPanX = panRef.current.x - (cx / newZ - cx / oldZ);
-    const newPanY = panRef.current.y - (cy / newZ - cy / oldZ);
+    // keep the cursor/center anchored while zooming
+    const newPanX = panRef.current.x + (cx / newZ - cx / oldZ);
+    const newPanY = panRef.current.y + (cy / newZ - cy / oldZ);
 
     zoomRef.current = newZ;
     panRef.current = { x: newPanX, y: newPanY };
     setZoom(newZ);
     setPan({ x: newPanX, y: newPanY });
   }, []);
+
+  const rebaseWorkspaceIfNeeded = useCallback((point: Point): { point: Point; shifted: boolean } => {
+    const c = canvasRef.current;
+    if (!c) return { point, shifted: false };
+
+    let shiftX = 0;
+    let shiftY = 0;
+
+    if (point.x < EDGE_REBASE_MARGIN) shiftX = Math.round(EDGE_REBASE_MARGIN - point.x);
+    else if (point.x > c.width - EDGE_REBASE_MARGIN) shiftX = Math.round((c.width - EDGE_REBASE_MARGIN) - point.x);
+
+    if (point.y < EDGE_REBASE_MARGIN) shiftY = Math.round(EDGE_REBASE_MARGIN - point.y);
+    else if (point.y > c.height - EDGE_REBASE_MARGIN) shiftY = Math.round((c.height - EDGE_REBASE_MARGIN) - point.y);
+
+    if (!shiftX && !shiftY) return { point, shifted: false };
+
+    const temp = document.createElement('canvas');
+    temp.width = c.width;
+    temp.height = c.height;
+    const tctx = temp.getContext('2d');
+    const ctx = c.getContext('2d');
+    if (!tctx || !ctx) return { point, shifted: false };
+
+    tctx.drawImage(c, 0, 0);
+    ctx.fillStyle = bgColor;
+    ctx.fillRect(0, 0, c.width, c.height);
+    ctx.drawImage(temp, shiftX, shiftY);
+
+    const nextPan = { x: panRef.current.x - shiftX, y: panRef.current.y - shiftY };
+    panRef.current = nextPan;
+    setPan(nextPan);
+    setOrigin((prev) => (prev ? { x: prev.x + shiftX, y: prev.y + shiftY } : prev));
+    setTextPos((prev) => (prev ? { x: prev.x + shiftX, y: prev.y + shiftY } : prev));
+    setStampPrompt((prev) => (prev ? { ...prev, pos: { x: prev.pos.x + shiftX, y: prev.pos.y + shiftY } } : prev));
+    lastMouseRef.current = { x: lastMouseRef.current.x + shiftX, y: lastMouseRef.current.y + shiftY };
+    renderView();
+
+    return { point: { x: point.x + shiftX, y: point.y + shiftY }, shifted: true };
+  }, [bgColor, renderView]);
 
   const resetView = useCallback(() => {
     const view = viewRef.current;
@@ -577,7 +762,7 @@ export const DrawingCanvas: React.FC<{
       e.preventDefault();
       if (e.ctrlKey) {
         // zoom
-        const delta = e.deltaY > 0 ? -0.1 : 0.1;
+        const delta = e.deltaY > 0 ? -0.07 : 0.07;
         const rect = view.getBoundingClientRect();
         doZoom(delta, e.clientX - rect.left, e.clientY - rect.top);
       } else {
@@ -612,17 +797,35 @@ export const DrawingCanvas: React.FC<{
   }, [tool, color, fillColor, size, opacity, doFill, bgColor]);
 
   const drawShape = useCallback((ctx: CanvasRenderingContext2D, from: Point, to: Point) => {
-    const dx = to.x - from.x, dy = to.y - from.y;
+    let dx = to.x - from.x;
+    let dy = to.y - from.y;
+
+    if (assistLevel !== 'off') {
+      if (tool === 'line' || tool === 'arrow') {
+        const len = Math.max(1, Math.sqrt(dx * dx + dy * dy));
+        const angle = Math.atan2(dy, dx);
+        const step = Math.PI / 12; // 15deg snapping
+        const snapped = Math.round(angle / step) * step;
+        dx = Math.cos(snapped) * len;
+        dy = Math.sin(snapped) * len;
+      } else if (tool === 'rectangle' || tool === 'circle' || tool === 'triangle' || tool === 'diamond' || tool === 'star') {
+        const m = Math.max(Math.abs(dx), Math.abs(dy));
+        dx = Math.sign(dx || 1) * m;
+        dy = Math.sign(dy || 1) * m;
+      }
+    }
+
+    const end = { x: from.x + dx, y: from.y + dy };
     ctx.beginPath();
     switch (tool) {
       case 'line':
-        ctx.moveTo(from.x, from.y); ctx.lineTo(to.x, to.y); ctx.stroke(); break;
+        ctx.moveTo(from.x, from.y); ctx.lineTo(end.x, end.y); ctx.stroke(); break;
       case 'arrow': {
         const a = Math.atan2(dy, dx), hl = Math.max(12, size * 4);
-        ctx.moveTo(from.x, from.y); ctx.lineTo(to.x, to.y); ctx.stroke();
+        ctx.moveTo(from.x, from.y); ctx.lineTo(end.x, end.y); ctx.stroke();
         ctx.beginPath();
-        ctx.moveTo(to.x, to.y); ctx.lineTo(to.x - hl * Math.cos(a - Math.PI / 6), to.y - hl * Math.sin(a - Math.PI / 6));
-        ctx.moveTo(to.x, to.y); ctx.lineTo(to.x - hl * Math.cos(a + Math.PI / 6), to.y - hl * Math.sin(a + Math.PI / 6));
+        ctx.moveTo(end.x, end.y); ctx.lineTo(end.x - hl * Math.cos(a - Math.PI / 6), end.y - hl * Math.sin(a - Math.PI / 6));
+        ctx.moveTo(end.x, end.y); ctx.lineTo(end.x - hl * Math.cos(a + Math.PI / 6), end.y - hl * Math.sin(a + Math.PI / 6));
         ctx.stroke(); break;
       }
       case 'rectangle':
@@ -634,7 +837,7 @@ export const DrawingCanvas: React.FC<{
         if (doFill) ctx.fill(); ctx.stroke(); break;
       }
       case 'triangle':
-        ctx.moveTo(from.x + dx / 2, from.y); ctx.lineTo(to.x, to.y); ctx.lineTo(from.x, to.y);
+        ctx.moveTo(from.x + dx / 2, from.y); ctx.lineTo(end.x, end.y); ctx.lineTo(from.x, end.y);
         ctx.closePath(); if (doFill) ctx.fill(); ctx.stroke(); break;
       case 'diamond':
         diamondPath(ctx, from.x + dx / 2, from.y + dy / 2, Math.abs(dx), Math.abs(dy));
@@ -645,7 +848,7 @@ export const DrawingCanvas: React.FC<{
         if (doFill) ctx.fill(); ctx.stroke(); break;
       }
     }
-  }, [tool, size, doFill]);
+  }, [tool, size, doFill, assistLevel]);
 
   /* ─── flood fill ─── */
   const floodFill = useCallback((sx: number, sy: number, hex: string) => {
@@ -680,11 +883,32 @@ export const DrawingCanvas: React.FC<{
     ctx.putImageData(img, 0, 0);
   }, []);
 
+  const findTopTextAt = useCallback((p: Point): TextObject | null => {
+    const c = canvasRef.current;
+    const ctx = c?.getContext('2d');
+    if (!ctx) return null;
+    const padX = 8;
+    const padTop = 18;
+    const padBottom = 8;
+    for (let i = textObjectsRef.current.length - 1; i >= 0; i -= 1) {
+      const t = textObjectsRef.current[i];
+      ctx.font = `${t.size * 4 + 14}px sans-serif`;
+      const width = ctx.measureText(t.text).width;
+      const height = t.size * 4 + 14;
+      const left = t.x - padX;
+      const right = t.x + width + padX;
+      const top = t.y - height - padTop;
+      const bottom = t.y + padBottom;
+      if (p.x >= left && p.x <= right && p.y >= top && p.y <= bottom) return t;
+    }
+    return null;
+  }, []);
+
   /* ─── mouse handlers ─── */
   const onDown = (e: React.MouseEvent) => {
     if (!canEdit) return;
     const screenP = { x: e.clientX, y: e.clientY };
-    const p = toCanvas(e.clientX, e.clientY);
+    const rawPoint = toCanvas(e.clientX, e.clientY);
 
     // Ctrl+click or hand tool → pan
     if (tool === 'hand' || ctrlHeld.current) {
@@ -693,6 +917,7 @@ export const DrawingCanvas: React.FC<{
       panStartPanRef.current = { ...panRef.current };
       return;
     }
+    const p = rebaseWorkspaceIfNeeded(rawPoint).point;
 
     if (tool === 'eyedropper') {
       const c = canvasRef.current!;
@@ -709,8 +934,20 @@ export const DrawingCanvas: React.FC<{
       snap();
       return;
     }
-    if (tool === 'text') { setTextPos(p); return; }
-    if (tool === 'select') return;
+    if (tool === 'text') {
+      if (textPos && textVal.trim()) commitText();
+      setTextPos(p);
+      setTextVal('');
+      return;
+    }
+    if (tool === 'select') {
+      const hit = findTopTextAt(p);
+      if (hit) {
+        movingTextIdRef.current = hit.id;
+        textMoveOffsetRef.current = { x: p.x - hit.x, y: p.y - hit.y };
+      }
+      return;
+    }
 
     if (isStamp) {
       // show label prompt
@@ -721,6 +958,7 @@ export const DrawingCanvas: React.FC<{
 
     setDrawing(true);
     setOrigin(p);
+    lastMouseRef.current = p;
 
     if (isFree) {
       const ctx = canvasRef.current!.getContext('2d')!;
@@ -729,32 +967,85 @@ export const DrawingCanvas: React.FC<{
       ctx.moveTo(p.x, p.y);
       ctx.lineTo(p.x + 0.1, p.y + 0.1);
       ctx.stroke();
+      assistPrevPointRef.current = p;
+      assistSmoothPointRef.current = p;
       renderView();
     }
   };
 
   const onMove = (e: React.MouseEvent) => {
     const screenP = { x: e.clientX, y: e.clientY };
-    const p = toCanvas(e.clientX, e.clientY);
+    let rebased = { point: toCanvas(e.clientX, e.clientY), shifted: false };
+    if (drawing && canEdit && isFree) rebased = rebaseWorkspaceIfNeeded(rebased.point);
+    const p = rebased.point;
+    const prevMouse = lastMouseRef.current;
     if (onCursorMove) onCursorMove(p.x, p.y);
-    lastMouseRef.current = p;
 
     if (panning) {
       const dx = (screenP.x - panStartRef.current.x) / zoomRef.current;
       const dy = (screenP.y - panStartRef.current.y) / zoomRef.current;
       panRef.current = { x: panStartPanRef.current.x + dx, y: panStartPanRef.current.y + dy };
       setPan({ ...panRef.current });
+      lastMouseRef.current = p;
       return;
     }
 
-    if (!drawing || !canEdit) return;
+    if (!drawing || !canEdit) {
+      if (movingTextIdRef.current) {
+        const id = movingTextIdRef.current;
+        const nextX = p.x - textMoveOffsetRef.current.x;
+        const nextY = p.y - textMoveOffsetRef.current.y;
+        setTextObjects((prev) => prev.map((t) => (t.id === id ? { ...t, x: nextX, y: nextY } : t)));
+      }
+      lastMouseRef.current = p;
+      return;
+    }
 
     if (isFree) {
       const ctx = canvasRef.current!.getContext('2d')!;
-      ctx.lineTo(p.x, p.y);
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.moveTo(p.x, p.y);
+      if (rebased.shifted) {
+        setupCtx(ctx);
+        ctx.beginPath();
+        ctx.moveTo(prevMouse.x, prevMouse.y);
+        assistPrevPointRef.current = prevMouse;
+        assistSmoothPointRef.current = prevMouse;
+      }
+      if (isAssistableFree) {
+        const prevRaw = assistPrevPointRef.current ?? p;
+        const smoothPrev = assistSmoothPointRef.current ?? prevRaw;
+        const jump = Math.hypot(p.x - prevRaw.x, p.y - prevRaw.y);
+        if (jump > assistCfg[assistLevel].jump) {
+          // If events are sparse (fast movement), bridge with a direct segment first.
+          ctx.lineTo(p.x, p.y);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.moveTo(p.x, p.y);
+          assistPrevPointRef.current = p;
+          assistSmoothPointRef.current = p;
+          renderView();
+          lastMouseRef.current = p;
+          return;
+        }
+        const smoothNext = {
+          x: smoothPrev.x + (p.x - smoothPrev.x) * assistCfg[assistLevel].alpha,
+          y: smoothPrev.y + (p.y - smoothPrev.y) * assistCfg[assistLevel].alpha,
+        };
+        const mid = {
+          x: (smoothPrev.x + smoothNext.x) / 2,
+          y: (smoothPrev.y + smoothNext.y) / 2,
+        };
+        ctx.quadraticCurveTo(smoothPrev.x, smoothPrev.y, mid.x, mid.y);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(mid.x, mid.y);
+        assistPrevPointRef.current = p;
+        assistSmoothPointRef.current = smoothNext;
+      } else {
+        ctx.lineTo(p.x, p.y);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(p.x, p.y);
+      }
       renderView();
     }
 
@@ -769,16 +1060,26 @@ export const DrawingCanvas: React.FC<{
       drawShape(ctx, origin, p);
       ctx.restore();
     }
+    lastMouseRef.current = p;
   };
 
   const onUp = () => {
     if (panning) { setPanning(false); return; }
+    if (movingTextIdRef.current) {
+      movingTextIdRef.current = null;
+      lastLocalDrawAtRef.current = Date.now();
+      renderView();
+      emitSnapshotChange();
+      return;
+    }
     if (!drawing) return;
     setDrawing(false);
 
     if (isFree) {
       const ctx = canvasRef.current!.getContext('2d')!;
       ctx.closePath(); ctx.globalAlpha = 1;
+      assistPrevPointRef.current = null;
+      assistSmoothPointRef.current = null;
       snap();
     }
 
@@ -795,6 +1096,33 @@ export const DrawingCanvas: React.FC<{
     }
   };
 
+  useEffect(() => {
+    if (tool !== 'text' || !textPos) return;
+    const raf = window.requestAnimationFrame(() => {
+      textInputRef.current?.focus();
+      textInputRef.current?.select();
+    });
+    return () => window.cancelAnimationFrame(raf);
+  }, [tool, textPos]);
+
+  useEffect(() => {
+    if (!draggingTextDraft || !textPos) return;
+    const onMoveDraft = (e: MouseEvent) => {
+      const p = toCanvas(e.clientX, e.clientY);
+      setTextPos({
+        x: p.x - textDragOffsetRef.current.x,
+        y: p.y - textDragOffsetRef.current.y,
+      });
+    };
+    const onStopDraft = () => setDraggingTextDraft(false);
+    window.addEventListener('mousemove', onMoveDraft);
+    window.addEventListener('mouseup', onStopDraft);
+    return () => {
+      window.removeEventListener('mousemove', onMoveDraft);
+      window.removeEventListener('mouseup', onStopDraft);
+    };
+  }, [draggingTextDraft, textPos, toCanvas]);
+
   /* ─── stamp prompt submit ─── */
   const commitStamp = () => {
     if (!stampPrompt) return;
@@ -807,13 +1135,19 @@ export const DrawingCanvas: React.FC<{
 
   const commitText = () => {
     if (!textPos || !textVal.trim()) { setTextPos(null); setTextVal(''); return; }
-    const ctx = canvasRef.current!.getContext('2d')!;
-    ctx.font = `${size * 4 + 14}px sans-serif`;
-    ctx.fillStyle = color;
-    ctx.globalAlpha = opacity / 100;
-    ctx.fillText(textVal, textPos.x, textPos.y);
-    ctx.globalAlpha = 1;
-    snap();
+    const next: TextObject = {
+      id: `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
+      text: textVal,
+      x: textPos.x,
+      y: textPos.y,
+      color,
+      size,
+      opacity,
+    };
+    setTextObjects((prev) => [...prev, next]);
+    lastLocalDrawAtRef.current = Date.now();
+    renderView();
+    emitSnapshotChange();
     setTextPos(null);
     setTextVal('');
   };
@@ -823,13 +1157,48 @@ export const DrawingCanvas: React.FC<{
     const ctx = c.getContext('2d')!;
     ctx.fillStyle = bgColor;
     ctx.fillRect(0, 0, c.width, c.height);
+    setTextObjects([]);
     snap();
+  };
+
+  const resetAll = () => {
+    const c = canvasRef.current!;
+    const ctx = c.getContext('2d')!;
+    ctx.fillStyle = bgColor;
+    ctx.fillRect(0, 0, c.width, c.height);
+    const baseline = ctx.getImageData(0, 0, c.width, c.height);
+    undos.current = [baseline];
+    redos.current = [];
+
+    setTool('pencil');
+    setTextObjects([]);
+    setTextPos(null);
+    setTextVal('');
+    setStampPrompt(null);
+    setStampLabel('');
+
+    const view = viewRef.current;
+    if (view) {
+      zoomRef.current = 1;
+      const newPan = { x: -CANVAS_W / 2 + view.width / 2, y: -CANVAS_H / 2 + view.height / 2 };
+      panRef.current = newPan;
+      setZoom(1);
+      setPan(newPan);
+    }
+
+    lastLocalDrawAtRef.current = Date.now();
+    renderView();
+    if (onSnapshotChange) {
+      const snapshot = c.toDataURL('image/png');
+      lastSnapshotSentRef.current = snapshot;
+      onSnapshotChange(snapshot);
+    }
   };
 
   const downloadPng = () => {
     const a = document.createElement('a');
     a.download = 'drawing.png';
-    a.href = canvasRef.current!.toDataURL('image/png');
+    a.href = buildMergedSnapshot() || canvasRef.current!.toDataURL('image/png');
     a.click();
   };
 
@@ -839,7 +1208,39 @@ export const DrawingCanvas: React.FC<{
     '#06b6d4', '#14b8a6', '#a855f7', '#f43f5e', '#84cc16',
   ];
 
+  useEffect(() => {
+    const source = paletteTarget === 'stroke' ? color : fillColor;
+    const parsed = hexToHsl(source);
+    setPaletteHue(parsed.h);
+    setPaletteSat(parsed.s);
+    setPaletteLight(parsed.l);
+  }, [showCompactMixer, paletteTarget, color, fillColor]);
+
+  const applyPaletteColor = useCallback((h: number, s: number, l: number) => {
+    const next = hslToHex(h, s, l);
+    if (paletteTarget === 'stroke') setColor(next);
+    else setFillColor(next);
+  }, [paletteTarget]);
+
+  const updateColorFromPalettePoint = useCallback((clientX: number, clientY: number) => {
+    const wheel = paletteRef.current;
+    if (!wheel) return;
+    const rect = wheel.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    const dx = clientX - cx;
+    const dy = clientY - cy;
+    const radius = rect.width / 2;
+    const dist = Math.min(radius, Math.sqrt(dx * dx + dy * dy));
+    const sat = (dist / radius) * 100;
+    const hue = ((Math.atan2(dy, dx) * 180) / Math.PI + 360) % 360;
+    setPaletteHue(hue);
+    setPaletteSat(sat);
+    applyPaletteColor(hue, sat, paletteLight);
+  }, [applyPaletteColor, paletteLight]);
+
   const isPanning = panning || tool === 'hand' || ctrlHeld.current;
+  const showExpandedTopBar = !isCompactUI;
   const cursor = (() => {
     if (!canEdit) return 'default';
     if (isPanning) return panning ? 'grabbing' : 'grab';
@@ -853,126 +1254,457 @@ export const DrawingCanvas: React.FC<{
   /* ═══════════════════ RENDER ═══════════════════ */
 
   return (
-    <div className={`flex h-full overflow-hidden relative ${isDark ? 'bg-[#141417]/50 backdrop-blur-xl' : 'bg-[#f8f8f8]'}`}>
+    <div className={`flex h-full overflow-hidden relative ${
+      isFullscreen
+        ? (isDark ? 'bg-[#121417]' : 'bg-[#f2f3f5]')
+        : (isDark ? 'bg-[#141417]/50 backdrop-blur-xl' : 'bg-[#f8f8f8]')
+    }`}>
 
       {/* hidden full-size canvas (off-screen drawing surface) */}
       <canvas ref={canvasRef} className="hidden" />
 
       {/* ─── LEFT SIDEBAR ─── */}
-      <div className={`w-[60px] shrink-0 flex flex-col items-center border-r overflow-y-auto no-scrollbar py-4 gap-1 backdrop-blur-2xl ${isDark ? 'bg-[#1a1a1e]/80 border-white/5' : 'bg-[#fcfcfc]/80 border-black/5'}`}>
-        <Btn onClick={onClose} title="Close" isDark={isDark} className="mb-2 text-rose-500 hover:bg-rose-500/10 hover:border-rose-500/20"><XIcon size={SZ} /></Btn>
-        {onFullscreen && (
-          <Btn onClick={onFullscreen} title={isFullscreen ? 'Exit Fullscreen (Esc)' : 'Fullscreen'} isDark={isDark} className="mb-2">
-            {isFullscreen ? <Minimize2 size={SZ} /> : <Maximize size={SZ} />}
-          </Btn>
+      <div className={`${isFullscreen ? 'w-[194px]' : 'w-[60px]'} shrink-0 flex flex-col ${isFullscreen ? 'items-stretch' : 'items-center'} border-r overflow-y-auto py-3 gap-1 ${
+        isFullscreen ? 'custom-scrollbar' : 'no-scrollbar'
+      } ${
+        isFullscreen
+          ? (isDark ? 'bg-[#181c22] border-white/10' : 'bg-[#f8f9fb] border-[#d6dbe4]')
+          : `backdrop-blur-2xl ${isDark ? 'bg-[#1a1a1e]/80 border-white/5' : 'bg-[#fcfcfc]/80 border-black/5'}`
+      }`}>
+        {isFullscreen ? (
+          <>
+            <div className="px-2">
+              <Btn onClick={onClose} title="Close" isDark={isDark} className="text-rose-500 hover:bg-rose-500/10 hover:border-rose-500/20"><XIcon size={SZ} /></Btn>
+            </div>
+            <div className={`mx-2 mt-1 rounded-xl border p-2 ${
+              isDark
+                ? 'border-white/10 bg-[#13161b]'
+                : 'border-[#cfd6e0] bg-[#eef2f7] shadow-[inset_0_1px_0_rgba(255,255,255,0.8)]'
+            }`}>
+              <div className="grid grid-cols-2 gap-1 mb-2">
+                {(['draw', 'shape', 'dev', 'extra'] as const).map((section) => (
+                  <button
+                    key={section}
+                    onClick={() => setFullscreenToolSection(section)}
+                    className={`h-7 rounded-md text-[9px] font-black uppercase tracking-wider border transition-colors ${
+                      fullscreenToolSection === section
+                        ? (isDark ? 'bg-blue-600/20 text-blue-300 border-blue-500/30' : 'bg-[#d9e9ff] text-[#1556b8] border-[#7eb0ff]')
+                        : (isDark ? 'text-gray-400 border-white/10 hover:bg-white/5' : 'text-[#4b5563] border-[#c8d1dd] hover:bg-white')
+                    }`}
+                  >
+                    {section === 'dev' ? 'Flow' : section}
+                  </button>
+                ))}
+              </div>
+              <div className="grid grid-cols-3 gap-1 [&>button]:h-9 [&>button]:w-full [&>button]:rounded-md [&>button]:border [&>button]:border-white/10">
+                {fullscreenToolSection === 'draw' && (
+                  <>
+                    <Btn active={tool === 'select'} onClick={() => setTool('select')} title="Select" isDark={isDark}><MousePointer size={SZ} /></Btn>
+                    <Btn active={tool === 'hand'} onClick={() => setTool('hand')} title="Hand (Space / Ctrl+drag)" isDark={isDark}><Hand size={SZ} /></Btn>
+                    <Btn active={tool === 'pencil'} onClick={() => setTool('pencil')} title="Pencil" isDark={isDark}><Pencil size={SZ} /></Btn>
+                    <Btn active={tool === 'pen'} onClick={() => setTool('pen')} title="Pen" isDark={isDark}><Pen size={SZ} /></Btn>
+                    <Btn active={tool === 'marker'} onClick={() => setTool('marker')} title="Marker" isDark={isDark}><Highlighter size={SZ} /></Btn>
+                    <Btn active={tool === 'eraser'} onClick={() => setTool('eraser')} title="Eraser" isDark={isDark}><Eraser size={SZ} /></Btn>
+                  </>
+                )}
+                {fullscreenToolSection === 'shape' && (
+                  <>
+                    <Btn active={tool === 'line'} onClick={() => setTool('line')} title="Line" isDark={isDark}><Minus size={SZ} /></Btn>
+                    <Btn active={tool === 'arrow'} onClick={() => setTool('arrow')} title="Arrow" isDark={isDark}><ArrowRight size={SZ} /></Btn>
+                    <Btn active={tool === 'rectangle'} onClick={() => setTool('rectangle')} title="Rectangle" isDark={isDark}><Square size={SZ} /></Btn>
+                    <Btn active={tool === 'circle'} onClick={() => setTool('circle')} title="Ellipse" isDark={isDark}><Circle size={SZ} /></Btn>
+                    <Btn active={tool === 'triangle'} onClick={() => setTool('triangle')} title="Triangle" isDark={isDark}><Triangle size={SZ} /></Btn>
+                    <Btn active={tool === 'diamond'} onClick={() => setTool('diamond')} title="Diamond" isDark={isDark}><Diamond size={SZ} /></Btn>
+                    <Btn active={tool === 'star'} onClick={() => setTool('star')} title="Star" isDark={isDark}><Star size={SZ} /></Btn>
+                  </>
+                )}
+                {fullscreenToolSection === 'dev' && (
+                  <>
+                    <Btn active={tool === 'stamp-flowbox'} onClick={() => setTool('stamp-flowbox')} title="Process Box" isDark={isDark}><Workflow size={SZ} /></Btn>
+                    <Btn active={tool === 'stamp-decision'} onClick={() => setTool('stamp-decision')} title="Decision Diamond" isDark={isDark}><GitBranch size={SZ} /></Btn>
+                    <Btn active={tool === 'stamp-process'} onClick={() => setTool('stamp-process')} title="Start / End" isDark={isDark}><Hexagon size={SZ} /></Btn>
+                    <Btn active={tool === 'stamp-database'} onClick={() => setTool('stamp-database')} title="Database" isDark={isDark}><Database size={SZ} /></Btn>
+                    <Btn active={tool === 'stamp-server'} onClick={() => setTool('stamp-server')} title="Server" isDark={isDark}><Server size={SZ} /></Btn>
+                    <Btn active={tool === 'stamp-cloud'} onClick={() => setTool('stamp-cloud')} title="Cloud" isDark={isDark}><Cloud size={SZ} /></Btn>
+                    <Btn active={tool === 'stamp-actor'} onClick={() => setTool('stamp-actor')} title="User / Actor" isDark={isDark}><Monitor size={SZ} /></Btn>
+                    <Btn active={tool === 'stamp-note'} onClick={() => setTool('stamp-note')} title="Sticky Note" isDark={isDark}><StickyNote size={SZ} /></Btn>
+                  </>
+                )}
+                {fullscreenToolSection === 'extra' && (
+                  <>
+                    <Btn active={tool === 'text'} onClick={() => setTool('text')} title="Text" isDark={isDark}><Type size={SZ} /></Btn>
+                    <Btn active={tool === 'fill'} onClick={() => setTool('fill')} title="Fill Bucket" isDark={isDark}><PaintBucket size={SZ} /></Btn>
+                    <Btn active={tool === 'eyedropper'} onClick={() => setTool('eyedropper')} title="Pick Color" isDark={isDark}><Pipette size={SZ} /></Btn>
+                    <Btn active={assistLevel !== 'off'} onClick={cycleAssistLevel} title={`Stroke Assist (${assistLabel})`} isDark={isDark}><Palette size={SZ} /></Btn>
+                    <Btn active={showGrid} onClick={() => setShowGrid(!showGrid)} title="Toggle Grid" isDark={isDark}><Grid3X3 size={SZ} /></Btn>
+                  </>
+                )}
+              </div>
+            </div>
+          </>
+        ) : (
+          <>
+            <Btn onClick={onClose} title="Close" isDark={isDark} className="mb-2 text-rose-500 hover:bg-rose-500/10 hover:border-rose-500/20"><XIcon size={SZ} /></Btn>
+            {onFullscreen && (
+              <Btn onClick={() => onFullscreen?.()} title={isFullscreen ? 'Exit Fullscreen (Esc)' : 'Fullscreen'} isDark={isDark} className="mb-2">
+                {isFullscreen ? <Minimize2 size={SZ} /> : <Maximize size={SZ} />}
+              </Btn>
+            )}
+            <SectionLabel label="Draw" isDark={isDark} />
+            <Btn active={tool === 'select'} onClick={() => setTool('select')} title="Select" isDark={isDark}><MousePointer size={SZ} /></Btn>
+            <Btn active={tool === 'hand'} onClick={() => setTool('hand')} title="Hand (Space / Ctrl+drag)" isDark={isDark}><Hand size={SZ} /></Btn>
+            <Btn active={tool === 'pencil'} onClick={() => setTool('pencil')} title="Pencil" isDark={isDark}><Pencil size={SZ} /></Btn>
+            <Btn active={tool === 'pen'} onClick={() => setTool('pen')} title="Pen" isDark={isDark}><Pen size={SZ} /></Btn>
+            <Btn active={tool === 'marker'} onClick={() => setTool('marker')} title="Marker" isDark={isDark}><Highlighter size={SZ} /></Btn>
+            <Btn active={tool === 'eraser'} onClick={() => setTool('eraser')} title="Eraser" isDark={isDark}><Eraser size={SZ} /></Btn>
+            <SectionLabel label="Shape" isDark={isDark} />
+            <Btn active={tool === 'line'} onClick={() => setTool('line')} title="Line" isDark={isDark}><Minus size={SZ} /></Btn>
+            <Btn active={tool === 'arrow'} onClick={() => setTool('arrow')} title="Arrow" isDark={isDark}><ArrowRight size={SZ} /></Btn>
+            <Btn active={tool === 'rectangle'} onClick={() => setTool('rectangle')} title="Rectangle" isDark={isDark}><Square size={SZ} /></Btn>
+            <Btn active={tool === 'circle'} onClick={() => setTool('circle')} title="Ellipse" isDark={isDark}><Circle size={SZ} /></Btn>
+            <Btn active={tool === 'triangle'} onClick={() => setTool('triangle')} title="Triangle" isDark={isDark}><Triangle size={SZ} /></Btn>
+            <Btn active={tool === 'diamond'} onClick={() => setTool('diamond')} title="Diamond" isDark={isDark}><Diamond size={SZ} /></Btn>
+            <Btn active={tool === 'star'} onClick={() => setTool('star')} title="Star" isDark={isDark}><Star size={SZ} /></Btn>
+            <SectionLabel label="Dev" isDark={isDark} />
+            <Btn active={tool === 'stamp-flowbox'} onClick={() => setTool('stamp-flowbox')} title="Process Box" isDark={isDark}><Workflow size={SZ} /></Btn>
+            <Btn active={tool === 'stamp-decision'} onClick={() => setTool('stamp-decision')} title="Decision Diamond" isDark={isDark}><GitBranch size={SZ} /></Btn>
+            <Btn active={tool === 'stamp-process'} onClick={() => setTool('stamp-process')} title="Start / End" isDark={isDark}><Hexagon size={SZ} /></Btn>
+            <Btn active={tool === 'stamp-database'} onClick={() => setTool('stamp-database')} title="Database" isDark={isDark}><Database size={SZ} /></Btn>
+            <Btn active={tool === 'stamp-server'} onClick={() => setTool('stamp-server')} title="Server" isDark={isDark}><Server size={SZ} /></Btn>
+            <Btn active={tool === 'stamp-cloud'} onClick={() => setTool('stamp-cloud')} title="Cloud" isDark={isDark}><Cloud size={SZ} /></Btn>
+            <Btn active={tool === 'stamp-actor'} onClick={() => setTool('stamp-actor')} title="User / Actor" isDark={isDark}><Monitor size={SZ} /></Btn>
+            <Btn active={tool === 'stamp-note'} onClick={() => setTool('stamp-note')} title="Sticky Note" isDark={isDark}><StickyNote size={SZ} /></Btn>
+            <SectionLabel label="Extra" isDark={isDark} />
+            <Btn active={tool === 'text'} onClick={() => setTool('text')} title="Text" isDark={isDark}><Type size={SZ} /></Btn>
+            <Btn active={tool === 'fill'} onClick={() => setTool('fill')} title="Fill Bucket" isDark={isDark}><PaintBucket size={SZ} /></Btn>
+            <Btn active={tool === 'eyedropper'} onClick={() => setTool('eyedropper')} title="Pick Color" isDark={isDark}><Pipette size={SZ} /></Btn>
+            <Btn active={assistLevel !== 'off'} onClick={cycleAssistLevel} title={`Stroke Assist (${assistLabel})`} isDark={isDark}><Palette size={SZ} /></Btn>
+            <Btn active={showGrid} onClick={() => setShowGrid(!showGrid)} title="Toggle Grid" isDark={isDark}><Grid3X3 size={SZ} /></Btn>
+          </>
         )}
-
-        <SectionLabel label="Draw" isDark={isDark} />
-        <Btn active={tool === 'select'} onClick={() => setTool('select')} title="Select" isDark={isDark}><MousePointer size={SZ} /></Btn>
-        <Btn active={tool === 'hand'} onClick={() => setTool('hand')} title="Hand (Space / Ctrl+drag)" isDark={isDark}><Hand size={SZ} /></Btn>
-        <Btn active={tool === 'pencil'} onClick={() => setTool('pencil')} title="Pencil" isDark={isDark}><Pencil size={SZ} /></Btn>
-        <Btn active={tool === 'pen'} onClick={() => setTool('pen')} title="Pen" isDark={isDark}><Pen size={SZ} /></Btn>
-        <Btn active={tool === 'marker'} onClick={() => setTool('marker')} title="Marker" isDark={isDark}><Highlighter size={SZ} /></Btn>
-        <Btn active={tool === 'eraser'} onClick={() => setTool('eraser')} title="Eraser" isDark={isDark}><Eraser size={SZ} /></Btn>
-
-        <SectionLabel label="Shape" isDark={isDark} />
-        <Btn active={tool === 'line'} onClick={() => setTool('line')} title="Line" isDark={isDark}><Minus size={SZ} /></Btn>
-        <Btn active={tool === 'arrow'} onClick={() => setTool('arrow')} title="Arrow" isDark={isDark}><ArrowRight size={SZ} /></Btn>
-        <Btn active={tool === 'rectangle'} onClick={() => setTool('rectangle')} title="Rectangle" isDark={isDark}><Square size={SZ} /></Btn>
-        <Btn active={tool === 'circle'} onClick={() => setTool('circle')} title="Ellipse" isDark={isDark}><Circle size={SZ} /></Btn>
-        <Btn active={tool === 'triangle'} onClick={() => setTool('triangle')} title="Triangle" isDark={isDark}><Triangle size={SZ} /></Btn>
-        <Btn active={tool === 'diamond'} onClick={() => setTool('diamond')} title="Diamond" isDark={isDark}><Diamond size={SZ} /></Btn>
-        <Btn active={tool === 'star'} onClick={() => setTool('star')} title="Star" isDark={isDark}><Star size={SZ} /></Btn>
-
-        <SectionLabel label="Dev" isDark={isDark} />
-        <Btn active={tool === 'stamp-flowbox'} onClick={() => setTool('stamp-flowbox')} title="Process Box" isDark={isDark}><Workflow size={SZ} /></Btn>
-        <Btn active={tool === 'stamp-decision'} onClick={() => setTool('stamp-decision')} title="Decision Diamond" isDark={isDark}><GitBranch size={SZ} /></Btn>
-        <Btn active={tool === 'stamp-process'} onClick={() => setTool('stamp-process')} title="Start / End" isDark={isDark}><Hexagon size={SZ} /></Btn>
-        <Btn active={tool === 'stamp-database'} onClick={() => setTool('stamp-database')} title="Database" isDark={isDark}><Database size={SZ} /></Btn>
-        <Btn active={tool === 'stamp-server'} onClick={() => setTool('stamp-server')} title="Server" isDark={isDark}><Server size={SZ} /></Btn>
-        <Btn active={tool === 'stamp-cloud'} onClick={() => setTool('stamp-cloud')} title="Cloud" isDark={isDark}><Cloud size={SZ} /></Btn>
-        <Btn active={tool === 'stamp-actor'} onClick={() => setTool('stamp-actor')} title="User / Actor" isDark={isDark}><Monitor size={SZ} /></Btn>
-        <Btn active={tool === 'stamp-note'} onClick={() => setTool('stamp-note')} title="Sticky Note" isDark={isDark}><StickyNote size={SZ} /></Btn>
-
-        <SectionLabel label="Extra" isDark={isDark} />
-        <Btn active={tool === 'text'} onClick={() => setTool('text')} title="Text" isDark={isDark}><Type size={SZ} /></Btn>
-        <Btn active={tool === 'fill'} onClick={() => setTool('fill')} title="Fill Bucket" isDark={isDark}><PaintBucket size={SZ} /></Btn>
-        <Btn active={tool === 'eyedropper'} onClick={() => setTool('eyedropper')} title="Pick Color" isDark={isDark}><Pipette size={SZ} /></Btn>
-        <Btn active={showGrid} onClick={() => setShowGrid(!showGrid)} title="Toggle Grid" isDark={isDark}><Grid3X3 size={SZ} /></Btn>
       </div>
 
       {/* ─── RIGHT SIDE ─── */}
       <div className="flex-1 flex flex-col overflow-hidden">
 
         {/* top controls */}
-        <div className={`flex items-center gap-4 px-4 h-14 border-b shrink-0 backdrop-blur-2xl ${isDark ? 'bg-[#1a1a1e]/80 border-white/5' : 'bg-[#fcfcfc]/80 border-black/5'}`}>
-          <label className="flex items-center gap-3 cursor-pointer group px-3 py-1.5 rounded-xl hover:bg-white/5 transition-all">
-            <div className="relative flex items-center">
-              <input type="checkbox" checked={doFill} onChange={() => setDoFill(!doFill)} className="sr-only" />
-              <div className={`w-8 h-4 rounded-full transition-colors ${doFill ? 'bg-blue-500' : 'bg-white/10'}`} />
-              <div className={`absolute left-0.5 w-3 h-3 rounded-full bg-white transition-transform ${doFill ? 'translate-x-4' : 'translate-x-0'}`} />
-            </div>
-            <span className={`text-[10px] font-black uppercase tracking-widest ${isDark ? 'text-gray-500 group-hover:text-gray-300' : 'text-gray-600'}`}>Fill</span>
-          </label>
+        <div className={`border-b shrink-0 ${
+          isFullscreen
+            ? (isDark ? 'bg-[#171a1f] border-white/10' : 'bg-[#f2f5fa] border-black/10')
+            : `backdrop-blur-2xl ${isDark ? 'bg-[#1a1a1e]/80 border-white/5' : 'bg-[#fcfcfc]/80 border-black/5'}`
+        }`}>
+          {showExpandedTopBar ? (
+            <div className="flex items-center gap-2 px-4 h-14">
+              <label className="flex items-center gap-3 cursor-pointer group px-3 py-1.5 rounded-xl hover:bg-white/5 transition-all">
+                <div className="relative flex items-center">
+                  <input type="checkbox" checked={doFill} onChange={() => setDoFill(!doFill)} className="sr-only" />
+                  <div className={`w-8 h-4 rounded-full transition-colors ${doFill ? 'bg-blue-500' : 'bg-white/10'}`} />
+                  <div className={`absolute left-0.5 w-3 h-3 rounded-full bg-white transition-transform ${doFill ? 'translate-x-4' : 'translate-x-0'}`} />
+                </div>
+                <span className={`text-[10px] font-black uppercase tracking-widest ${isDark ? 'text-gray-500 group-hover:text-gray-300' : 'text-gray-600'}`}>Fill</span>
+              </label>
+              <label className="flex items-center gap-2 px-3 py-1.5 rounded-xl hover:bg-white/5 transition-all">
+                <span className={`text-[10px] font-black uppercase tracking-widest ${isDark ? 'text-gray-500' : 'text-gray-600'}`}>Assist</span>
+                <select
+                  value={assistLevel}
+                  onChange={(e) => setAssistLevel(e.target.value as AssistLevel)}
+                  className={`h-7 rounded-md border px-2 text-[10px] font-black uppercase tracking-wider outline-none ${
+                    isDark ? 'bg-[#11161e] border-white/10 text-gray-200' : 'bg-white border-black/10 text-gray-700'
+                  }`}
+                >
+                  {assistOptions.map((level) => (
+                    <option key={level} value={level}>
+                      {level}
+                    </option>
+                  ))}
+                </select>
+              </label>
 
-          <div className="w-[1px] h-4 bg-white/10" />
-          
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-3">
-              <span className="text-[10px] font-black uppercase tracking-widest text-gray-600">Size</span>
-              <input type="range" min={1} max={30} value={size} onChange={e => setSize(+e.target.value)} className="ethereal-range w-24 h-1" />
-              <span className="text-[10px] font-bold w-5 text-center text-gray-400 tabular-nums">{size}</span>
-            </div>
+              <div className="w-[1px] h-4 bg-white/10" />
+              <Btn
+                active={showTopStylePanel}
+                onClick={() => {
+                  setShowTopStylePanel(v => !v);
+                  setShowCompactMixer(false);
+                }}
+                title="Style (Size / Opacity)"
+                isDark={isDark}
+                className="h-8 px-3 gap-1"
+              >
+                <SlidersHorizontal size={14} />
+                <span className="text-[10px] font-black uppercase tracking-wider">Style</span>
+              </Btn>
+              <Btn
+                active={showCompactMixer}
+                onClick={() => {
+                  setShowCompactMixer(v => !v);
+                  setShowTopStylePanel(false);
+                }}
+                title="Color Palette"
+                isDark={isDark}
+                className="h-8 px-3 gap-1"
+              >
+                <Palette size={14} />
+                <span className="text-[10px] font-black uppercase tracking-wider">Palette</span>
+              </Btn>
 
-            <div className="flex items-center gap-3">
-              <span className="text-[10px] font-black uppercase tracking-widest text-gray-600">Opac</span>
-              <input type="range" min={5} max={100} value={opacity} onChange={e => setOpacity(+e.target.value)} className="ethereal-range w-20 h-1" />
-              <span className="text-[10px] font-bold w-8 text-center text-gray-400 tabular-nums">{opacity}%</span>
-            </div>
-          </div>
+              <div className="flex-1" />
 
-          <div className="w-[1px] h-4 bg-white/10" />
-
-          <div className="flex items-center gap-3">
-            <label title="Stroke color" className="relative cursor-pointer group">
-              <div className="w-6 h-6 rounded-lg border border-white/20 shadow-lg transition-transform group-hover:scale-110" style={{ backgroundColor: color }}>
-                <input type="color" value={color} onChange={e => setColor(e.target.value)} className="opacity-0 absolute inset-0 cursor-pointer" />
+              <div className="flex items-center gap-1 bg-white/5 p-1 rounded-2xl border border-white/5">
+                <Btn onClick={() => doZoom(-0.15)} title="Zoom Out" isDark={isDark} className="h-8 w-8"><ZoomOut size={14} /></Btn>
+                <span className="text-[10px] font-black w-10 text-center text-gray-400 tabular-nums">{Math.round(zoom * 100)}%</span>
+                <Btn onClick={() => doZoom(0.15)} title="Zoom In" isDark={isDark} className="h-8 w-8"><ZoomIn size={14} /></Btn>
+                <Btn onClick={resetView} title="Reset View" isDark={isDark} className="h-8 w-8"><LocateFixed size={14} /></Btn>
+                {onFullscreen && !isFullscreen && (
+                  <Btn onClick={() => onFullscreen?.()} title={isFullscreen ? 'Exit Fullscreen (Ctrl+F)' : 'Fullscreen (Ctrl+F)'} isDark={isDark} className="h-8 w-8">
+                    {isFullscreen ? <Minimize2 size={14} /> : <Maximize size={14} />}
+                  </Btn>
+                )}
               </div>
-            </label>
-            <label title="Fill color" className="relative cursor-pointer group">
-              <div className="w-6 h-6 rounded-lg border border-white/20 shadow-lg flex items-center justify-center transition-transform group-hover:scale-110" style={{ backgroundColor: fillColor }}>
-                <span className="text-[8px] text-white font-black drop-shadow-md">F</span>
-                <input type="color" value={fillColor} onChange={e => setFillColor(e.target.value)} className="opacity-0 absolute inset-0 cursor-pointer" />
+
+              <div className="w-[1px] h-4 mx-2 bg-white/10" />
+
+              <div className="flex items-center gap-1 bg-white/5 p-1 rounded-2xl border border-white/5">
+                <Btn onClick={undo} title="Undo (Ctrl+Z)" isDark={isDark} className="h-8 w-8"><Undo2 size={14} /></Btn>
+                <Btn onClick={redo} title="Redo (Ctrl+Y)" isDark={isDark} className="h-8 w-8"><Redo2 size={14} /></Btn>
+                <Btn onClick={clearCanvas} title="Clear Canvas" isDark={isDark} className="h-8 w-8 hover:text-rose-400 hover:bg-rose-500/10"><Trash2 size={14} /></Btn>
+                <Btn onClick={resetAll} title="Reset All (board + view)" isDark={isDark} className="h-8 w-8 text-amber-400 hover:bg-amber-500/10"><RotateCcw size={14} /></Btn>
+                <Btn onClick={downloadPng} title="Save as PNG" isDark={isDark} className="h-8 w-8 text-emerald-400 hover:bg-emerald-500/10"><Download size={14} /></Btn>
               </div>
-            </label>
-            <div className="flex items-center gap-1.5 ml-1">
-              {presets.slice(0, 10).map(c => (
-                <button key={c} onClick={() => setColor(c)} title={c}
-                  className={`w-4 h-4 rounded-md transition-all hover:scale-125 active:scale-95 ${color === c ? 'ring-2 ring-blue-500 ring-offset-2 ring-offset-[#1e1e1e]' : 'border border-white/5'}`}
-                  style={{ backgroundColor: c }}
+            </div>
+          ) : (
+            <div className="px-3 py-2">
+              <div className={`flex items-center py-0.5 ${
+                isFullscreen
+                  ? 'flex-wrap gap-1.5 overflow-visible'
+                  : 'gap-1 overflow-x-auto no-scrollbar'
+              }`}>
+                <Btn active={showCompactControls} onClick={() => setShowCompactControls(v => !v)} title="Open controls" isDark={isDark} className="h-8 px-3 gap-1">
+                  <SlidersHorizontal size={14} />
+                  <span className="text-[10px] font-black uppercase tracking-wider">Controls</span>
+                </Btn>
+                <Btn active={showCompactMixer} onClick={() => setShowCompactMixer(v => !v)} title="Color palette" isDark={isDark} className="h-8 px-3 gap-1">
+                  <Palette size={14} />
+                  <span className="text-[10px] font-black uppercase tracking-wider">Palette</span>
+                </Btn>
+                <Btn active={assistLevel !== 'off'} onClick={cycleAssistLevel} title={`Stroke Assist (${assistLabel})`} isDark={isDark} className="h-8 px-3 gap-1">
+                  <span className="text-[10px] font-black uppercase tracking-wider">Assist {assistLabel}</span>
+                </Btn>
+                <Btn onClick={undo} title="Undo (Ctrl+Z)" isDark={isDark} className="h-8 w-8"><Undo2 size={14} /></Btn>
+                <Btn onClick={redo} title="Redo (Ctrl+Y)" isDark={isDark} className="h-8 w-8"><Redo2 size={14} /></Btn>
+                <Btn onClick={resetAll} title="Reset All (board + view)" isDark={isDark} className="h-8 w-8 text-amber-400 hover:bg-amber-500/10"><RotateCcw size={14} /></Btn>
+                <Btn onClick={clearCanvas} title="Clear Canvas" isDark={isDark} className="h-8 w-8 hover:text-rose-400 hover:bg-rose-500/10"><Trash2 size={14} /></Btn>
+                <Btn onClick={downloadPng} title="Save as PNG" isDark={isDark} className="h-8 w-8 text-emerald-400 hover:bg-emerald-500/10"><Download size={14} /></Btn>
+                <div className="flex items-center gap-1 bg-white/5 p-1 rounded-2xl border border-white/5">
+                  <Btn onClick={() => doZoom(-0.15)} title="Zoom Out" isDark={isDark} className="h-8 w-8"><ZoomOut size={14} /></Btn>
+                  <span className="text-[10px] font-black w-10 text-center text-gray-400 tabular-nums">{Math.round(zoom * 100)}%</span>
+                  <Btn onClick={() => doZoom(0.15)} title="Zoom In" isDark={isDark} className="h-8 w-8"><ZoomIn size={14} /></Btn>
+                  <Btn onClick={resetView} title="Reset View" isDark={isDark} className="h-8 w-8"><LocateFixed size={14} /></Btn>
+                </div>
+                {onFullscreen && !isFullscreen && (
+                  <Btn onClick={() => onFullscreen?.()} title={isFullscreen ? 'Exit Fullscreen (Ctrl+F)' : 'Fullscreen (Ctrl+F)'} isDark={isDark} className="h-8 w-8">
+                    {isFullscreen ? <Minimize2 size={14} /> : <Maximize size={14} />}
+                  </Btn>
+                )}
+              </div>
+              {showCompactMixer && (
+                <div className={`mt-2 rounded-xl border p-3 space-y-3 ${isDark ? 'border-white/10 bg-black/20' : 'border-black/10 bg-white/85'}`}>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setPaletteTarget('stroke')}
+                      className={`h-8 px-3 rounded-lg text-[10px] font-black uppercase tracking-widest border ${
+                        paletteTarget === 'stroke'
+                          ? 'bg-blue-600/20 text-blue-300 border-blue-500/30'
+                          : isDark ? 'text-gray-300 border-white/10' : 'text-gray-700 border-black/10'
+                      }`}
+                    >
+                      Stroke
+                    </button>
+                    <button
+                      onClick={() => setPaletteTarget('fill')}
+                      className={`h-8 px-3 rounded-lg text-[10px] font-black uppercase tracking-widest border ${
+                        paletteTarget === 'fill'
+                          ? 'bg-blue-600/20 text-blue-300 border-blue-500/30'
+                          : isDark ? 'text-gray-300 border-white/10' : 'text-gray-700 border-black/10'
+                      }`}
+                    >
+                      Fill
+                    </button>
+                    <div className="ml-auto flex items-center gap-2">
+                      <div className="h-7 w-7 rounded-full border border-white/20" style={{ backgroundColor: color }} title="Stroke" />
+                      <div className="h-7 w-7 rounded-full border border-white/20" style={{ backgroundColor: fillColor }} title="Fill" />
+                    </div>
+                  </div>
+
+                  <div className="flex justify-center">
+                    <div
+                      ref={paletteRef}
+                      className="relative w-36 h-36 rounded-full border border-white/15 cursor-crosshair"
+                      style={{
+                        background: 'radial-gradient(circle at center, #ffffff 0%, rgba(255,255,255,0) 62%), conic-gradient(#ff0000, #ffff00, #00ff00, #00ffff, #0000ff, #ff00ff, #ff0000)',
+                      }}
+                      onMouseDown={(e) => { updateColorFromPalettePoint(e.clientX, e.clientY); }}
+                      onMouseMove={(e) => { if (e.buttons === 1) updateColorFromPalettePoint(e.clientX, e.clientY); }}
+                    >
+                      <div
+                        className="absolute w-3 h-3 rounded-full border border-white shadow-[0_0_0_1px_rgba(0,0,0,0.35)] -translate-x-1/2 -translate-y-1/2 pointer-events-none"
+                        style={{
+                          left: `${50 + Math.cos((paletteHue * Math.PI) / 180) * (paletteSat / 2)}%`,
+                          top: `${50 + Math.sin((paletteHue * Math.PI) / 180) * (paletteSat / 2)}%`,
+                          backgroundColor: hslToHex(paletteHue, paletteSat, paletteLight),
+                        }}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <div className="text-[10px] font-black uppercase tracking-widest text-gray-500">Lightness ({Math.round(paletteLight)}%)</div>
+                    <input
+                      type="range"
+                      min={5}
+                      max={100}
+                      value={paletteLight}
+                      onChange={e => {
+                        const nextLight = +e.target.value;
+                        setPaletteLight(nextLight);
+                        applyPaletteColor(paletteHue, paletteSat, nextLight);
+                      }}
+                      className="ethereal-range w-full h-1"
+                    />
+                  </div>
+                </div>
+              )}
+              {showCompactControls && (
+                <div className={`mt-2 rounded-xl border p-3 space-y-3 ${isDark ? 'border-white/10 bg-black/20' : 'border-black/10 bg-white/85'}`}>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input type="checkbox" checked={doFill} onChange={() => setDoFill(!doFill)} className="accent-blue-500" />
+                      <span className={`text-[11px] font-semibold ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>Fill</span>
+                    </label>
+                    <label className="flex items-center gap-2">
+                      <span className={`text-[11px] font-semibold ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>Assist</span>
+                      <select
+                        value={assistLevel}
+                        onChange={(e) => setAssistLevel(e.target.value as AssistLevel)}
+                        className={`h-7 rounded-md border px-2 text-[11px] font-semibold outline-none ${
+                          isDark ? 'bg-[#11161e] border-white/10 text-gray-200' : 'bg-white border-black/10 text-gray-700'
+                        }`}
+                      >
+                        {assistOptions.map((level) => (
+                          <option key={level} value={level}>
+                            {level}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <Btn onClick={clearCanvas} title="Clear Canvas" isDark={isDark} className="h-8 w-8 hover:text-rose-400 hover:bg-rose-500/10"><Trash2 size={14} /></Btn>
+                    <Btn onClick={downloadPng} title="Save as PNG" isDark={isDark} className="h-8 w-8 text-emerald-400 hover:bg-emerald-500/10"><Download size={14} /></Btn>
+                  </div>
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-3">
+                      <span className="text-[10px] font-black uppercase tracking-widest text-gray-500 w-10">Size</span>
+                      <input type="range" min={1} max={30} value={size} onChange={e => setSize(+e.target.value)} className="ethereal-range flex-1 h-1" />
+                      <span className="text-[10px] font-bold w-8 text-right text-gray-400 tabular-nums">{size}</span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span className="text-[10px] font-black uppercase tracking-widest text-gray-500 w-10">Opac</span>
+                      <input type="range" min={5} max={100} value={opacity} onChange={e => setOpacity(+e.target.value)} className="ethereal-range flex-1 h-1" />
+                      <span className="text-[10px] font-bold w-8 text-right text-gray-400 tabular-nums">{opacity}%</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <label title="Stroke color" className="relative cursor-pointer">
+                      <div className="w-7 h-7 rounded-lg border border-white/20 shadow-lg" style={{ backgroundColor: color }}>
+                        <input type="color" value={color} onChange={e => setColor(e.target.value)} className="opacity-0 absolute inset-0 cursor-pointer" />
+                      </div>
+                    </label>
+                    <label title="Fill color" className="relative cursor-pointer">
+                      <div className="w-7 h-7 rounded-lg border border-white/20 shadow-lg flex items-center justify-center" style={{ backgroundColor: fillColor }}>
+                        <span className="text-[8px] text-white font-black drop-shadow-md">F</span>
+                        <input type="color" value={fillColor} onChange={e => setFillColor(e.target.value)} className="opacity-0 absolute inset-0 cursor-pointer" />
+                      </div>
+                    </label>
+                    {presets.slice(0, 12).map(c => (
+                      <button
+                        key={c}
+                        onClick={() => setColor(c)}
+                        title={c}
+                        className={`w-5 h-5 rounded-md transition-all hover:scale-110 ${color === c ? 'ring-2 ring-blue-500' : 'border border-white/10'}`}
+                        style={{ backgroundColor: c }}
+                      />
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+          {showCompactMixer && !isCompactUI && (
+            <div className={`mx-4 mb-3 rounded-xl border p-3 space-y-3 ${isDark ? 'border-white/10 bg-black/20' : 'border-black/10 bg-white/85'}`}>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setPaletteTarget('stroke')}
+                  className={`h-8 px-3 rounded-lg text-[10px] font-black uppercase tracking-widest border ${
+                    paletteTarget === 'stroke'
+                      ? 'bg-blue-600/20 text-blue-300 border-blue-500/30'
+                      : isDark ? 'text-gray-300 border-white/10' : 'text-gray-700 border-black/10'
+                  }`}
+                >
+                  Stroke
+                </button>
+                <button
+                  onClick={() => setPaletteTarget('fill')}
+                  className={`h-8 px-3 rounded-lg text-[10px] font-black uppercase tracking-widest border ${
+                    paletteTarget === 'fill'
+                      ? 'bg-blue-600/20 text-blue-300 border-blue-500/30'
+                      : isDark ? 'text-gray-300 border-white/10' : 'text-gray-700 border-black/10'
+                  }`}
+                >
+                  Fill
+                </button>
+                <div className="ml-auto flex items-center gap-2">
+                  <div className="h-7 w-7 rounded-full border border-white/20" style={{ backgroundColor: color }} title="Stroke" />
+                  <div className="h-7 w-7 rounded-full border border-white/20" style={{ backgroundColor: fillColor }} title="Fill" />
+                </div>
+              </div>
+
+              <div className="flex justify-center">
+                <div
+                  ref={paletteRef}
+                  className="relative w-40 h-40 rounded-full border border-white/15 cursor-crosshair"
+                  style={{
+                    background: 'radial-gradient(circle at center, #ffffff 0%, rgba(255,255,255,0) 62%), conic-gradient(#ff0000, #ffff00, #00ff00, #00ffff, #0000ff, #ff00ff, #ff0000)',
+                  }}
+                  onMouseDown={(e) => { updateColorFromPalettePoint(e.clientX, e.clientY); }}
+                  onMouseMove={(e) => { if (e.buttons === 1) updateColorFromPalettePoint(e.clientX, e.clientY); }}
+                >
+                  <div
+                    className="absolute w-3 h-3 rounded-full border border-white shadow-[0_0_0_1px_rgba(0,0,0,0.35)] -translate-x-1/2 -translate-y-1/2 pointer-events-none"
+                    style={{
+                      left: `${50 + Math.cos((paletteHue * Math.PI) / 180) * (paletteSat / 2)}%`,
+                      top: `${50 + Math.sin((paletteHue * Math.PI) / 180) * (paletteSat / 2)}%`,
+                      backgroundColor: hslToHex(paletteHue, paletteSat, paletteLight),
+                    }}
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <div className="text-[10px] font-black uppercase tracking-widest text-gray-500">Lightness ({Math.round(paletteLight)}%)</div>
+                <input
+                  type="range"
+                  min={5}
+                  max={100}
+                  value={paletteLight}
+                  onChange={e => {
+                    const nextLight = +e.target.value;
+                    setPaletteLight(nextLight);
+                    applyPaletteColor(paletteHue, paletteSat, nextLight);
+                  }}
+                  className="ethereal-range w-full h-1"
                 />
-              ))}
+              </div>
             </div>
-          </div>
-
-          <div className="flex-1" />
-
-          {/* zoom controls */}
-          <div className="flex items-center gap-1 bg-white/5 p-1 rounded-2xl border border-white/5">
-            <Btn onClick={() => doZoom(-0.15)} title="Zoom Out" isDark={isDark} className="h-8 w-8"><ZoomOut size={14} /></Btn>
-            <span className="text-[10px] font-black w-10 text-center text-gray-400 tabular-nums">{Math.round(zoom * 100)}%</span>
-            <Btn onClick={() => doZoom(0.15)} title="Zoom In" isDark={isDark} className="h-8 w-8"><ZoomIn size={14} /></Btn>
-            <Btn onClick={resetView} title="Reset View" isDark={isDark} className="h-8 w-8"><Maximize size={14} /></Btn>
-          </div>
-
-          <div className="w-[1px] h-4 mx-2 bg-white/10" />
-
-          <div className="flex items-center gap-1 bg-white/5 p-1 rounded-2xl border border-white/5">
-            <Btn onClick={undo} title="Undo (Ctrl+Z)" isDark={isDark} className="h-8 w-8"><Undo2 size={14} /></Btn>
-            <Btn onClick={redo} title="Redo (Ctrl+Y)" isDark={isDark} className="h-8 w-8"><Redo2 size={14} /></Btn>
-            <Btn onClick={clearCanvas} title="Clear Canvas" isDark={isDark} className="h-8 w-8 hover:text-rose-400 hover:bg-rose-500/10"><Trash2 size={14} /></Btn>
-            <Btn onClick={downloadPng} title="Save as PNG" isDark={isDark} className="h-8 w-8 text-emerald-400 hover:bg-emerald-500/10"><Download size={14} /></Btn>
-          </div>
+          )}
         </div>
 
         {/* ── canvas viewport ── */}
@@ -989,24 +1721,67 @@ export const DrawingCanvas: React.FC<{
 
           {/* text input on canvas */}
           {tool === 'text' && textPos && (
-            <input
-              autoFocus
-              value={textVal}
-              onChange={e => setTextVal(e.target.value)}
-              onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter') commitText(); if (e.key === 'Escape') { setTextPos(null); setTextVal(''); } }}
-              onBlur={commitText}
-              onClick={e => e.stopPropagation()}
-              className="absolute px-3 py-1.5 glass-panel outline-none border border-blue-500/50 shadow-2xl rounded-xl animate-in fade-in zoom-in-95"
+            <div
+              className="absolute z-[120] flex items-center gap-2"
               style={{
                 left: (textPos.x + panRef.current.x) * zoomRef.current,
                 top: (textPos.y + panRef.current.y) * zoomRef.current - 10,
-                fontSize: `${(size * 4 + 14) * zoomRef.current}px`,
-                color,
-                minWidth: 150,
-                zIndex: 100,
               }}
-              placeholder="Type here..."
-            />
+              onMouseDown={e => e.stopPropagation()}
+              onClick={e => e.stopPropagation()}
+            >
+              <button
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  const p = toCanvas(e.clientX, e.clientY);
+                  textDragOffsetRef.current = { x: p.x - textPos.x, y: p.y - textPos.y };
+                  setDraggingTextDraft(true);
+                }}
+                className="h-8 px-2 text-[10px] font-black uppercase tracking-widest bg-white/10 hover:bg-white/15 text-gray-200 rounded-lg cursor-move"
+                title="Drag text to reposition before placing"
+              >
+                Move
+              </button>
+              <input
+                ref={textInputRef}
+                autoFocus
+                value={textVal}
+                onChange={e => setTextVal(e.target.value)}
+                onMouseDown={e => e.stopPropagation()}
+                onKeyDown={e => {
+                  e.stopPropagation();
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    commitText();
+                  }
+                  if (e.key === 'Escape') {
+                    e.preventDefault();
+                    setTextPos(null);
+                    setTextVal('');
+                  }
+                }}
+                className="px-3 py-1.5 glass-panel outline-none border border-blue-500/50 shadow-2xl rounded-xl animate-in fade-in zoom-in-95"
+                style={{
+                  fontSize: `${(size * 4 + 14) * zoomRef.current}px`,
+                  color,
+                  minWidth: 180,
+                }}
+                placeholder="Type here..."
+              />
+              <button
+                onClick={commitText}
+                className="h-8 px-3 text-[10px] font-black uppercase tracking-widest bg-blue-600 hover:bg-blue-500 text-white rounded-lg shadow-lg shadow-blue-500/20"
+              >
+                Place
+              </button>
+              <button
+                onClick={() => { setTextPos(null); setTextVal(''); }}
+                className="h-8 px-3 text-[10px] font-black uppercase tracking-widest bg-white/5 hover:bg-white/10 text-gray-300 rounded-lg"
+              >
+                Cancel
+              </button>
+            </div>
           )}
 
           {/* stamp label prompt */}
@@ -1050,7 +1825,7 @@ export const DrawingCanvas: React.FC<{
           )}
 
           <div className="absolute bottom-6 right-6 px-4 py-1.5 glass-panel rounded-full text-[9px] font-bold uppercase tracking-widest text-gray-500 pointer-events-none opacity-50">
-            Ctrl+Drag to Pan · Ctrl+Scroll to Zoom
+            Ctrl+Drag to Pan · Ctrl+Scroll to Zoom · Assist smooths freehand
           </div>
           {showSplitSuggestion && (
             <div className="absolute top-6 right-6 px-4 py-2 glass-panel rounded-2xl text-[10px] font-bold uppercase tracking-[0.1em] text-blue-400 border border-blue-500/20 animate-pulse pointer-events-none">

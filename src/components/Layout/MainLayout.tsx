@@ -4,7 +4,7 @@ import { Sidebar } from '../Explorer/Sidebar';
 import { EditorContainer } from '../Editor/EditorContainer';
 import { ConsoleContainer } from '../Console/ConsoleContainer';
 import { useEditor } from '../../store/useEditor';
-import { Play, Square, Trophy, CheckCircle2, Files, Settings as SettingsIcon, Search as SearchIcon, Terminal as TerminalIcon, Sun, Moon, PenTool, Keyboard, Download, Share2, Copy, Mail, Link2, Minimize2, Users2, Globe, UserCircle } from 'lucide-react';
+import { Play, Square, Trophy, CheckCircle2, Files, Settings as SettingsIcon, Search as SearchIcon, Terminal as TerminalIcon, Sun, Moon, PenTool, Keyboard, Download, Share2, Copy, Mail, Link2, Minimize2, Users2, Globe, UserCircle, ArrowLeft } from 'lucide-react';
 import { createZipBlob } from '../../utils/zip';
 import { DrawingCanvas } from '../Drawing/DrawingCanvas';
 import { runner } from '../../runner/Runner';
@@ -18,6 +18,7 @@ import { Search } from '../Explorer/Search';
 import { Settings } from '../Explorer/Settings';
 import { PreviewPanel } from './PreviewPanel';
 import { CHALLENGES } from '../../data/challenges';
+import { WHITEBOARD_COMPACT_BREAKPOINTS } from '../../config/whiteboard';
 import { useAuth } from '../../store/useAuth';
 import { useCommunity } from '../../store/useCommunity';
 import { useConvexAuth, useMutation } from 'convex/react';
@@ -40,6 +41,7 @@ export const MainLayout: React.FC = () => {
   const [showConsole, setShowConsole] = useState(true);
   const [showDownloadMenu, setShowDownloadMenu] = useState(false);
   const [fullscreenDrawing, setFullscreenDrawing] = useState(false);
+  const [showChallengeProblemPanel, setShowChallengeProblemPanel] = useState(false);
   const [showShareModal, setShowShareModal] = useState(false);
   const [copyFeedback, setCopyFeedback] = useState('');
   const [consoleSizePct, setConsoleSizePct] = useState(30);
@@ -187,7 +189,21 @@ export const MainLayout: React.FC = () => {
     return 'log';
   };
   const isChallenge = !!activeChallenge;
+  const showChallengePanel = Boolean(activeChallenge && showChallengeProblemPanel);
+  const challengePanelData = showChallengePanel ? activeChallenge : null;
   const canRunChallengeTests = Boolean(activeChallenge?.functionName && activeChallenge?.testCases.length);
+
+  useEffect(() => {
+    if (!activeChallenge) {
+      setShowChallengeProblemPanel(false);
+      return;
+    }
+    // Opening a challenge should move focus to IDE + problem panel.
+    setShowChallengeProblemPanel(true);
+    if (activeTab === 'challenges') {
+      setShowSidebar(false);
+    }
+  }, [activeChallenge?.id]);
   const renderChallengeDescription = (raw: string) => {
     const lines = raw.split('\n');
     const extractUrl = (text: string) => {
@@ -500,6 +516,20 @@ export const MainLayout: React.FC = () => {
             <div className={`w-[1px] h-4 mx-1 ${isDark ? 'bg-[#333]' : 'bg-[#ddd]'}`} />
 
             {isChallenge && (
+              <button
+                onClick={() => setShowChallengeProblemPanel((v) => !v)}
+                className={`flex items-center gap-2 px-3 py-1 rounded text-[11px] font-medium transition-colors ${
+                  showChallengePanel
+                    ? 'bg-slate-600 hover:bg-slate-500 text-white'
+                    : 'bg-slate-700 hover:bg-slate-600 text-gray-100'
+                }`}
+                title={showChallengePanel ? 'Hide problem details panel' : 'Open problem details panel'}
+              >
+                <Trophy size={12} />
+                {showChallengePanel ? 'Hide Problem' : 'Open Problem'}
+              </button>
+            )}
+            {isChallenge && (
               <button 
             onClick={handleRunTests}
             disabled={isExecuting || !canRunChallengeTests}
@@ -626,23 +656,41 @@ export const MainLayout: React.FC = () => {
             </>
           )}
           
-          {activeChallenge ? (
+          {challengePanelData ? (
             <>
               <Panel id="challenge-panel" defaultSize={20} minSize={5}>
                 <div className={`h-full w-full flex flex-col border-r overflow-y-auto p-4 md:p-6 custom-scrollbar ${isDark ? 'bg-[#11141c]/90 border-white/10' : 'bg-white/90 border-black/10'}`}>
-                  <div className="flex items-center gap-3 mb-5 md:mb-6 min-w-0">
-                    <div className="p-2 rounded-xl bg-yellow-500/10 border border-yellow-500/20">
+                  <div className="flex items-center gap-2 mb-5 md:mb-6 min-w-0">
+                    <button
+                      onClick={() => {
+                        setShowChallengeProblemPanel(false);
+                        setActiveTab('challenges');
+                        setShowSidebar(true);
+                      }}
+                      className={`h-8 px-3 rounded-lg text-[10px] font-black uppercase tracking-wider border transition-colors ${
+                        isDark
+                          ? 'text-gray-200 border-white/10 hover:bg-white/10'
+                          : 'text-gray-700 border-black/10 hover:bg-black/5'
+                      }`}
+                      title="Return to challenge explorer"
+                    >
+                      <span className="inline-flex items-center gap-1.5">
+                        <ArrowLeft size={12} />
+                        Back
+                      </span>
+                    </button>
+                    <div className="p-2 rounded-xl bg-yellow-500/10 border border-yellow-500/20 shrink-0">
                       <Trophy size={16} className="text-yellow-500" />
                     </div>
-                    <h2 className={`text-xs md:text-sm font-black uppercase tracking-wider md:tracking-widest truncate ${isDark ? 'text-white' : 'text-black'}`}>{activeChallenge.title}</h2>
+                    <h2 className={`text-xs md:text-sm font-black uppercase tracking-wider md:tracking-widest truncate ${isDark ? 'text-white' : 'text-black'}`}>{challengePanelData.title}</h2>
                   </div>
                   <div className="mb-8">
                     <div className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-500 mb-2">Problem Description</div>
-                    {renderChallengeDescription(activeChallenge.description)}
+                    {renderChallengeDescription(challengePanelData.description)}
                   </div>
-                  {activeChallenge.externalUrl && (
+                  {challengePanelData.externalUrl && (
                     <a
-                      href={activeChallenge.externalUrl}
+                      href={challengePanelData.externalUrl}
                       target="_blank"
                       rel="noreferrer"
                       className="text-[10px] font-bold uppercase tracking-widest text-blue-400 hover:text-blue-300 transition-colors mb-6 inline-flex items-center gap-2"
@@ -652,13 +700,13 @@ export const MainLayout: React.FC = () => {
                   )}
                   <div className="space-y-4">
                     <h3 className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-500 border-b border-white/5 pb-2">Test Cases</h3>
-                    {activeChallenge.testCases.length === 0 ? (
+                    {challengePanelData.testCases.length === 0 ? (
                       <div className="p-4 rounded-2xl glass-card text-[11px] font-medium text-gray-500 border-dashed italic">
                         No executable test cases available.
                       </div>
                     ) : (
                       <div className="space-y-3">
-                        {activeChallenge.testCases.map((tc: { input: unknown; expected: unknown }, i: number) => (
+                        {challengePanelData.testCases.map((tc: { input: unknown; expected: unknown }, i: number) => (
                           <div key={i} className="glass-card p-4 text-[10px] font-mono space-y-2 group hover:border-white/10 transition-colors">
                             <div className="flex flex-col gap-1.5 md:flex-row md:justify-between md:items-center">
                               <span className="text-blue-400/60 font-bold uppercase tracking-widest">Input</span>
@@ -710,7 +758,13 @@ export const MainLayout: React.FC = () => {
                 <>
                   <Separator className="resize-handle-horizontal" />
                   <Panel id="drawing-panel-challenge" defaultSize={30} minSize={15}>
-                    <DrawingCanvas onClose={() => setShowDrawing(false)} isFullscreen={fullscreenDrawing} onFullscreen={() => setFullscreenDrawing(f => !f)} />
+                    <DrawingCanvas
+                      onClose={() => setShowDrawing(false)}
+                      isFullscreen={fullscreenDrawing}
+                      onFullscreen={() => setFullscreenDrawing(f => !f)}
+                      desktopCompactBreakpoint={WHITEBOARD_COMPACT_BREAKPOINTS.mainEmbedded.desktop}
+                      mobileCompactBreakpoint={WHITEBOARD_COMPACT_BREAKPOINTS.mainEmbedded.mobile}
+                    />
                   </Panel>
                 </>
               )}
@@ -759,7 +813,13 @@ export const MainLayout: React.FC = () => {
                 <>
                   <Separator className="resize-handle-horizontal" />
                   <Panel id="drawing-panel-main" defaultSize={35} minSize={15}>
-                    <DrawingCanvas onClose={() => setShowDrawing(false)} isFullscreen={fullscreenDrawing} onFullscreen={() => setFullscreenDrawing(f => !f)} />
+                    <DrawingCanvas
+                      onClose={() => setShowDrawing(false)}
+                      isFullscreen={fullscreenDrawing}
+                      onFullscreen={() => setFullscreenDrawing(f => !f)}
+                      desktopCompactBreakpoint={WHITEBOARD_COMPACT_BREAKPOINTS.mainEmbedded.desktop}
+                      mobileCompactBreakpoint={WHITEBOARD_COMPACT_BREAKPOINTS.mainEmbedded.mobile}
+                    />
                   </Panel>
                 </>
               )}
@@ -827,6 +887,9 @@ export const MainLayout: React.FC = () => {
                 ['Ctrl + T', 'Toggle Console'],
                 ['Ctrl + S', 'Save (auto-saved)'],
                 ['Ctrl + Shift + P', 'Toggle Shortcuts Panel'],
+                ['Ctrl/Cmd + Z (in drawing)', 'Undo whiteboard action'],
+                ['Ctrl/Cmd + Y or Shift + Z (in drawing)', 'Redo whiteboard action'],
+                ['Ctrl/Cmd + 0 (in drawing)', 'Reset whiteboard view'],
                 ['Escape', 'Close Dialogs'],
               ].map(([keys, action]) => (
                 <div key={keys} className={`flex items-center justify-between py-2 px-3 rounded ${isDark ? 'hover:bg-[#2d2d2d]' : 'hover:bg-gray-100'}`}>
@@ -841,12 +904,14 @@ export const MainLayout: React.FC = () => {
 
       {/* Fullscreen Drawing Overlay */}
       {fullscreenDrawing && showDrawing && (
-        <div className="fixed inset-0 z-[300] flex flex-col">
+        <div className="fixed inset-0 z-[2000] flex flex-col">
           <div className={`flex-1 ${isDark ? 'bg-[#1e1e1e]' : 'bg-white'}`}>
             <DrawingCanvas
               onClose={() => { setFullscreenDrawing(false); setShowDrawing(false); }}
               isFullscreen={true}
               onFullscreen={() => setFullscreenDrawing(false)}
+              desktopCompactBreakpoint={WHITEBOARD_COMPACT_BREAKPOINTS.fullscreen.desktop}
+              mobileCompactBreakpoint={WHITEBOARD_COMPACT_BREAKPOINTS.fullscreen.mobile}
             />
           </div>
           <div className={`h-6 flex items-center justify-center gap-3 text-[10px] shrink-0 ${isDark ? 'bg-[#007acc] text-white' : 'bg-[#007acc] text-white'}`}>
