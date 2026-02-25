@@ -247,6 +247,11 @@ Quick version:
 - verify profile open/auth flow
 - verify collaboration room + chat + whiteboard
 
+## Whiteboard Fix Notes
+
+For a detailed changelog of whiteboard and collaboration-board fixes (including assist levels, fullscreen/compact behavior, and room/local board modes), see:
+- `docs/whiteboard-fixes.md`
+
 ## Recommended Next Steps
 
 - Reduce lint debt module-by-module:
