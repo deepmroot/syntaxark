@@ -348,7 +348,7 @@ export const DrawingCanvas: React.FC<{
   const [opacity, setOpacity] = useState(100);
   const [doFill, setDoFill] = useState(false);
   const [showGrid, setShowGrid] = useState(false);
-  const [assistLevel, setAssistLevel] = useState<AssistLevel>('low');
+  const [assistLevel, setAssistLevel] = useState<AssistLevel>('off');
 
   const [drawing, setDrawing] = useState(false);
   const [panning, setPanning] = useState(false);
@@ -393,6 +393,7 @@ export const DrawingCanvas: React.FC<{
   const assistPrevPointRef = useRef<Point | null>(null);
   const assistSmoothPointRef = useRef<Point | null>(null);
   const snapshotDebounceRef = useRef<number | null>(null);
+  const renderFrameRef = useRef<number | null>(null);
   const lastSnapshotSentRef = useRef('');
   const lastAppliedSnapshotVersionRef = useRef<number>(0);
   const lastLocalDrawAtRef = useRef<number>(0);
@@ -439,10 +440,31 @@ export const DrawingCanvas: React.FC<{
     vctx.fillStyle = bgColor;
     vctx.fillRect(0, 0, view.width, view.height);
 
+    const z = zoomRef.current;
+    const panX = panRef.current.x;
+    const panY = panRef.current.y;
+    const srcX = -panX;
+    const srcY = -panY;
+    const srcW = view.width / z;
+    const srcH = view.height / z;
+    const drawSrcX = Math.max(0, srcX);
+    const drawSrcY = Math.max(0, srcY);
+    const drawSrcR = Math.min(src.width, srcX + srcW);
+    const drawSrcB = Math.min(src.height, srcY + srcH);
+    const drawSrcW = drawSrcR - drawSrcX;
+    const drawSrcH = drawSrcB - drawSrcY;
+
+    if (drawSrcW > 0 && drawSrcH > 0) {
+      const dstX = (drawSrcX - srcX) * z;
+      const dstY = (drawSrcY - srcY) * z;
+      const dstW = drawSrcW * z;
+      const dstH = drawSrcH * z;
+      vctx.drawImage(src, drawSrcX, drawSrcY, drawSrcW, drawSrcH, dstX, dstY, dstW, dstH);
+    }
+
     vctx.save();
-    vctx.scale(zoomRef.current, zoomRef.current);
-    vctx.translate(panRef.current.x, panRef.current.y);
-    vctx.drawImage(src, 0, 0);
+    vctx.scale(z, z);
+    vctx.translate(panX, panY);
     textObjectsRef.current.forEach((t) => drawTextObject(vctx, t));
     vctx.restore();
 
@@ -485,6 +507,22 @@ export const DrawingCanvas: React.FC<{
       vctx.restore();
     });
   }, [bgColor, isDark, showGrid, remoteCursors]);
+
+  const scheduleRenderView = useCallback(() => {
+    if (renderFrameRef.current !== null) return;
+    renderFrameRef.current = window.requestAnimationFrame(() => {
+      renderFrameRef.current = null;
+      renderView();
+    });
+  }, [renderView]);
+
+  useEffect(() => {
+    return () => {
+      if (renderFrameRef.current !== null) {
+        window.cancelAnimationFrame(renderFrameRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     renderView();
@@ -1022,7 +1060,7 @@ export const DrawingCanvas: React.FC<{
           ctx.moveTo(p.x, p.y);
           assistPrevPointRef.current = p;
           assistSmoothPointRef.current = p;
-          renderView();
+          scheduleRenderView();
           lastMouseRef.current = p;
           return;
         }
@@ -1046,7 +1084,7 @@ export const DrawingCanvas: React.FC<{
         ctx.beginPath();
         ctx.moveTo(p.x, p.y);
       }
-      renderView();
+      scheduleRenderView();
     }
 
     if (isShp && origin) {
