@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { Suspense, lazy, useState, useEffect, useRef } from 'react';
 import { Panel, Group, Separator, type PanelImperativeHandle } from 'react-resizable-panels';
 import { Sidebar } from '../Explorer/Sidebar';
 import { EditorContainer } from '../Editor/EditorContainer';
@@ -6,21 +6,12 @@ import { ConsoleContainer } from '../Console/ConsoleContainer';
 import { useEditor } from '../../store/useEditor';
 import { Play, Square, Trophy, CheckCircle2, Files, Settings as SettingsIcon, Search as SearchIcon, Terminal as TerminalIcon, Sun, Moon, PenTool, Keyboard, Download, Share2, Copy, Mail, Link2, Minimize2, Users2, Globe, UserCircle, ArrowLeft } from 'lucide-react';
 import { createZipBlob } from '../../utils/zip';
-import { DrawingCanvas } from '../Drawing/DrawingCanvas';
 import { runner } from '../../runner/Runner';
 import { useFileSystem } from '../../store/useFileSystem';
-import { ChallengesPanel } from '../Challenges/ChallengesPanel';
-import { CollaboratePanel } from '../Collaborate/CollaboratePanel';
 import { useCollabSession } from '../../store/useCollabSession';
 import { getNodePath } from '../../collab/core/path';
 import { useRoomPresence } from '../../collab/presence/useRoomPresence';
 import { useRoomWorkspace } from '../../collab/editor/useRoomWorkspace';
-import { CommunityPanel, CreatePostModal } from '../Community/CommunityPanel';
-import { AuthModal } from '../Profile/AuthModal';
-import { UserProfileModal } from '../Profile/UserProfileModal';
-import { Search } from '../Explorer/Search';
-import { Settings } from '../Explorer/Settings';
-import { PreviewPanel } from './PreviewPanel';
 import { CHALLENGES } from '../../data/challenges';
 import { WHITEBOARD_COMPACT_BREAKPOINTS } from '../../config/whiteboard';
 import { useAuth } from '../../store/useAuth';
@@ -35,6 +26,21 @@ type RoomParticipant = {
   userId: string;
   role?: 'owner' | 'editor' | 'viewer';
 };
+
+const LazyChallengesPanel = lazy(() => import('../Challenges/ChallengesPanel').then((m) => ({ default: m.ChallengesPanel })));
+const LazyCollaboratePanel = lazy(() => import('../Collaborate/CollaboratePanel').then((m) => ({ default: m.CollaboratePanel })));
+const LazyCommunityPanel = lazy(() => import('../Community/CommunityPanel').then((m) => ({ default: m.CommunityPanel })));
+const LazyCreatePostModal = lazy(() => import('../Community/CommunityPanel').then((m) => ({ default: m.CreatePostModal })));
+const LazyAuthModal = lazy(() => import('../Profile/AuthModal').then((m) => ({ default: m.AuthModal })));
+const LazyUserProfileModal = lazy(() => import('../Profile/UserProfileModal').then((m) => ({ default: m.UserProfileModal })));
+const LazySearch = lazy(() => import('../Explorer/Search').then((m) => ({ default: m.Search })));
+const LazySettings = lazy(() => import('../Explorer/Settings').then((m) => ({ default: m.Settings })));
+const LazyPreviewPanel = lazy(() => import('./PreviewPanel').then((m) => ({ default: m.PreviewPanel })));
+const LazyDrawingCanvas = lazy(() => import('../Drawing/DrawingCanvas').then((m) => ({ default: m.DrawingCanvas })));
+
+const LazyPanelFallback: React.FC<{ label?: string }> = ({ label = 'Loading…' }) => (
+  <div className="h-full w-full flex items-center justify-center text-xs text-gray-500">{label}</div>
+);
 
 export const MainLayout: React.FC = () => {
   const { isExecuting, setExecuting, addLog, clearLogs, setExecutionTime, executionTime, setTestResults, setPreviewCode, previewCode, theme, setTheme } = useEditor();
@@ -154,18 +160,43 @@ export const MainLayout: React.FC = () => {
 
   const renderSidebarContent = () => {
     switch (activeTab) {
-      case 'explorer': return <Sidebar />;
-      case 'challenges': return <ChallengesPanel />;
-      case 'collaborate': return (
-        <CollaboratePanel
-          onWhiteboardPresenceChange={setWhiteboardSharing}
-          onWhiteboardCursorSample={reportWhiteboardCursor}
-        />
-      );
-      case 'community': return <CommunityPanel />;
-      case 'search': return <Search />;
-      case 'settings': return <Settings />;
-      default: return <Sidebar />;
+      case 'explorer':
+        return <Sidebar />;
+      case 'challenges':
+        return (
+          <Suspense fallback={<LazyPanelFallback label="Loading challenges…" />}>
+            <LazyChallengesPanel />
+          </Suspense>
+        );
+      case 'collaborate':
+        return (
+          <Suspense fallback={<LazyPanelFallback label="Loading collaboration…" />}>
+            <LazyCollaboratePanel
+              onWhiteboardPresenceChange={setWhiteboardSharing}
+              onWhiteboardCursorSample={reportWhiteboardCursor}
+            />
+          </Suspense>
+        );
+      case 'community':
+        return (
+          <Suspense fallback={<LazyPanelFallback label="Loading community…" />}>
+            <LazyCommunityPanel />
+          </Suspense>
+        );
+      case 'search':
+        return (
+          <Suspense fallback={<LazyPanelFallback label="Loading search…" />}>
+            <LazySearch />
+          </Suspense>
+        );
+      case 'settings':
+        return (
+          <Suspense fallback={<LazyPanelFallback label="Loading settings…" />}>
+            <LazySettings />
+          </Suspense>
+        );
+      default:
+        return <Sidebar />;
     }
   };
 
@@ -797,13 +828,15 @@ export const MainLayout: React.FC = () => {
                 <>
                   <Separator className="resize-handle-horizontal" />
                   <Panel id="drawing-panel-challenge" defaultSize={30} minSize={15}>
-                    <DrawingCanvas
-                      onClose={() => setShowDrawing(false)}
-                      isFullscreen={fullscreenDrawing}
-                      onFullscreen={() => setFullscreenDrawing(f => !f)}
-                      desktopCompactBreakpoint={WHITEBOARD_COMPACT_BREAKPOINTS.mainEmbedded.desktop}
-                      mobileCompactBreakpoint={WHITEBOARD_COMPACT_BREAKPOINTS.mainEmbedded.mobile}
-                    />
+                    <Suspense fallback={<LazyPanelFallback label="Loading whiteboard…" />}>
+                      <LazyDrawingCanvas
+                        onClose={() => setShowDrawing(false)}
+                        isFullscreen={fullscreenDrawing}
+                        onFullscreen={() => setFullscreenDrawing(f => !f)}
+                        desktopCompactBreakpoint={WHITEBOARD_COMPACT_BREAKPOINTS.mainEmbedded.desktop}
+                        mobileCompactBreakpoint={WHITEBOARD_COMPACT_BREAKPOINTS.mainEmbedded.mobile}
+                      />
+                    </Suspense>
                   </Panel>
                 </>
               )}
@@ -811,7 +844,9 @@ export const MainLayout: React.FC = () => {
                 <>
                   <Separator className="resize-handle-horizontal" />
                   <Panel id="preview-panel-challenge" defaultSize={30} minSize={15}>
-                    <PreviewPanel isDark={isDark} />
+                    <Suspense fallback={<LazyPanelFallback label="Loading preview…" />}>
+                      <LazyPreviewPanel isDark={isDark} />
+                    </Suspense>
                   </Panel>
                 </>
               )}
@@ -852,13 +887,15 @@ export const MainLayout: React.FC = () => {
                 <>
                   <Separator className="resize-handle-horizontal" />
                   <Panel id="drawing-panel-main" defaultSize={35} minSize={15}>
-                    <DrawingCanvas
-                      onClose={() => setShowDrawing(false)}
-                      isFullscreen={fullscreenDrawing}
-                      onFullscreen={() => setFullscreenDrawing(f => !f)}
-                      desktopCompactBreakpoint={WHITEBOARD_COMPACT_BREAKPOINTS.mainEmbedded.desktop}
-                      mobileCompactBreakpoint={WHITEBOARD_COMPACT_BREAKPOINTS.mainEmbedded.mobile}
-                    />
+                    <Suspense fallback={<LazyPanelFallback label="Loading whiteboard…" />}>
+                      <LazyDrawingCanvas
+                        onClose={() => setShowDrawing(false)}
+                        isFullscreen={fullscreenDrawing}
+                        onFullscreen={() => setFullscreenDrawing(f => !f)}
+                        desktopCompactBreakpoint={WHITEBOARD_COMPACT_BREAKPOINTS.mainEmbedded.desktop}
+                        mobileCompactBreakpoint={WHITEBOARD_COMPACT_BREAKPOINTS.mainEmbedded.mobile}
+                      />
+                    </Suspense>
                   </Panel>
                 </>
               )}
@@ -866,7 +903,9 @@ export const MainLayout: React.FC = () => {
                 <>
                   <Separator className="resize-handle-horizontal" />
                   <Panel id="preview-panel-main" defaultSize={35} minSize={15}>
-                    <PreviewPanel isDark={isDark} />
+                    <Suspense fallback={<LazyPanelFallback label="Loading preview…" />}>
+                      <LazyPreviewPanel isDark={isDark} />
+                    </Suspense>
                   </Panel>
                 </>
               )}
@@ -945,13 +984,15 @@ export const MainLayout: React.FC = () => {
       {fullscreenDrawing && showDrawing && (
         <div className="fixed inset-0 z-[2000] flex flex-col">
           <div className={`flex-1 ${isDark ? 'bg-[#1e1e1e]' : 'bg-white'}`}>
-            <DrawingCanvas
-              onClose={() => { setFullscreenDrawing(false); setShowDrawing(false); }}
-              isFullscreen={true}
-              onFullscreen={() => setFullscreenDrawing(false)}
-              desktopCompactBreakpoint={WHITEBOARD_COMPACT_BREAKPOINTS.fullscreen.desktop}
-              mobileCompactBreakpoint={WHITEBOARD_COMPACT_BREAKPOINTS.fullscreen.mobile}
-            />
+            <Suspense fallback={<LazyPanelFallback label="Loading whiteboard…" />}>
+              <LazyDrawingCanvas
+                onClose={() => { setFullscreenDrawing(false); setShowDrawing(false); }}
+                isFullscreen={true}
+                onFullscreen={() => setFullscreenDrawing(false)}
+                desktopCompactBreakpoint={WHITEBOARD_COMPACT_BREAKPOINTS.fullscreen.desktop}
+                mobileCompactBreakpoint={WHITEBOARD_COMPACT_BREAKPOINTS.fullscreen.mobile}
+              />
+            </Suspense>
           </div>
           <div className={`h-6 flex items-center justify-center gap-3 text-[10px] shrink-0 ${isDark ? 'bg-[#007acc] text-white' : 'bg-[#007acc] text-white'}`}>
             <span>Fullscreen Drawing</span>
@@ -1061,9 +1102,21 @@ export const MainLayout: React.FC = () => {
       )}
 
       {/* Global Modals */}
-      {showAuth && <AuthModal onClose={() => setShowAuth(false)} />}
-      {showCreatePost && <CreatePostModal onClose={() => setShowCreatePost(false)} />}
-      {showProfile && <UserProfileModal onClose={() => setShowProfile(false)} />}
+      {showAuth && (
+        <Suspense fallback={null}>
+          <LazyAuthModal onClose={() => setShowAuth(false)} />
+        </Suspense>
+      )}
+      {showCreatePost && (
+        <Suspense fallback={null}>
+          <LazyCreatePostModal onClose={() => setShowCreatePost(false)} />
+        </Suspense>
+      )}
+      {showProfile && (
+        <Suspense fallback={null}>
+          <LazyUserProfileModal onClose={() => setShowProfile(false)} />
+        </Suspense>
+      )}
     </div>
   );
 };
