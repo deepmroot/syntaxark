@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect, useCallback, useReducer } from 'react';
+import React, { useRef, useState, useEffect, useCallback, useMemo, useReducer } from 'react';
 import { useEditor } from '../../store/useEditor';
 import { WHITEBOARD_COMPACT_BREAKPOINTS } from '../../config/whiteboard';
 import type {
@@ -500,6 +500,7 @@ export const DrawingCanvas: React.FC<{
   const checkpointInFlightRef = useRef(false);
   const lastRemoteOpAtRef = useRef<Record<string, number>>({});
   const [historyState, dispatchHistory] = useReducer(whiteboardHistoryReducer, initialWhiteboardHistoryState);
+  const [pendingLocalOps, setPendingLocalOps] = useState<SharedWhiteboardOp[]>([]);
 
   const isStamp = (tool as string).startsWith('stamp-');
   const isFree = ['pencil', 'pen', 'marker', 'eraser'].includes(tool);
@@ -759,6 +760,15 @@ export const DrawingCanvas: React.FC<{
   }, []);
 
   const sharedOpsEnabled = Boolean(onAppendWhiteboardOp && onReplaceWhiteboardOps);
+  const effectiveWhiteboardOps = useMemo(() => {
+    if (!sharedOpsEnabled) return whiteboardOps;
+    const acknowledgedIds = new Set(whiteboardOps.map((op) => op.opId));
+    const merged = [
+      ...whiteboardOps,
+      ...pendingLocalOps.filter((op) => !acknowledgedIds.has(op.opId)),
+    ];
+    return [...merged].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+  }, [pendingLocalOps, sharedOpsEnabled, whiteboardOps]);
 
   const emitSnapshotChange = useCallback(() => {
     if (!onSnapshotChange) return;
@@ -794,12 +804,12 @@ export const DrawingCanvas: React.FC<{
   }, [buildBaseSnapshot, countRasterOps, onSnapshotChange, sharedOpsEnabled]);
 
   const appendWhiteboardOp = useCallback((op: SharedWhiteboardOp) => {
+    if (!sharedOpsEnabled) return;
     appliedWhiteboardOpIdsRef.current.add(op.opId);
-    if (sharedOpsEnabled) {
-      const nextHistory = [...historyState.history, op];
-      dispatchHistory({ type: 'append', op });
-      void requestCheckpoint(nextHistory);
-    }
+    setPendingLocalOps((prev) => (prev.some((item) => item.opId === op.opId) ? prev : [...prev, op]));
+    const nextHistory = [...historyState.history, op];
+    dispatchHistory({ type: 'append', op });
+    void requestCheckpoint(nextHistory);
     void onAppendWhiteboardOp?.(op);
   }, [historyState.history, onAppendWhiteboardOp, requestCheckpoint, sharedOpsEnabled]);
 
@@ -896,7 +906,19 @@ export const DrawingCanvas: React.FC<{
   }, [applyWhiteboardOp, bgColor, initialSnapshot, renderView]);
 
   useEffect(() => {
-    const nextIds = whiteboardOps.map((op) => op.opId);
+    if (!sharedOpsEnabled) {
+      if (pendingLocalOps.length > 0) setPendingLocalOps([]);
+      return;
+    }
+    const acknowledgedIds = new Set(whiteboardOps.map((op) => op.opId));
+    setPendingLocalOps((prev) => {
+      const next = prev.filter((op) => !acknowledgedIds.has(op.opId));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [pendingLocalOps.length, sharedOpsEnabled, whiteboardOps]);
+
+  useEffect(() => {
+    const nextIds = effectiveWhiteboardOps.map((op) => op.opId);
     const appliedIds = Array.from(appliedWhiteboardOpIdsRef.current);
 
     const needsFullRebuild =
@@ -904,11 +926,11 @@ export const DrawingCanvas: React.FC<{
       appliedIds.some((id) => !nextIds.includes(id));
 
     if (needsFullRebuild) {
-      void rebuildFromSnapshotAndOps(whiteboardOps);
+      void rebuildFromSnapshotAndOps(effectiveWhiteboardOps);
       return;
     }
 
-    whiteboardOps.forEach((op) => {
+    effectiveWhiteboardOps.forEach((op) => {
       if (appliedWhiteboardOpIdsRef.current.has(op.opId)) return;
       appliedWhiteboardOpIdsRef.current.add(op.opId);
       if (op.createdBy && localUserId && op.createdBy !== localUserId) {
@@ -916,8 +938,8 @@ export const DrawingCanvas: React.FC<{
       }
       applyWhiteboardOp(op);
     });
-    dispatchHistory({ type: 'sync', ops: whiteboardOps });
-  }, [applyWhiteboardOp, localUserId, rebuildFromSnapshotAndOps, whiteboardOps]);
+    dispatchHistory({ type: 'sync', ops: effectiveWhiteboardOps });
+  }, [applyWhiteboardOp, effectiveWhiteboardOps, localUserId, rebuildFromSnapshotAndOps]);
 
   /* ─── save state on unmount ─── */
   useEffect(() => {
