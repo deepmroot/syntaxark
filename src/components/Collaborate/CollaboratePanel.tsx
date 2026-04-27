@@ -8,6 +8,13 @@ import { useAuth } from '../../store/useAuth';
 import { useCollabSession } from '../../store/useCollabSession';
 import { DrawingCanvas } from '../Drawing/DrawingCanvas';
 import { WHITEBOARD_COMPACT_BREAKPOINTS } from '../../config/whiteboard';
+import type { WhiteboardPresenceCursor } from '../../collab/core/types';
+import type { SharedWhiteboardOp } from '../../collab/whiteboard/types';
+import {
+  decodeWhiteboardOps,
+  encodeWhiteboardOpPayload,
+  getActiveDrawingUserIds,
+} from '../../collab/whiteboard/ops';
 
 type Participant = {
   _id: string;
@@ -39,7 +46,34 @@ type WhiteboardPresence = {
   isSharing?: boolean;
 };
 
-export const CollaboratePanel: React.FC = () => {
+type RemoteCursorView = {
+  userId: string;
+  username: string;
+  color: string;
+  cursorX?: number;
+  cursorY?: number;
+  isSharing: boolean;
+  isDrawing?: boolean;
+};
+
+type WhiteboardOpRow = {
+  _id: string;
+  opId: string;
+  kind: string;
+  payload?: string;
+  createdBy?: string;
+  createdAt?: number;
+};
+
+interface CollaboratePanelProps {
+  onWhiteboardPresenceChange?: (isSharing: boolean) => void;
+  onWhiteboardCursorSample?: (cursor: WhiteboardPresenceCursor) => void;
+}
+
+export const CollaboratePanel: React.FC<CollaboratePanelProps> = ({
+  onWhiteboardPresenceChange,
+  onWhiteboardCursorSample,
+}) => {
   const { theme } = useEditor();
   const { user, setShowAuth } = useAuth();
   const { roomId, roomCode, setSession, clearSession } = useCollabSession();
@@ -65,29 +99,37 @@ export const CollaboratePanel: React.FC = () => {
   const messages = (useQuery(api.rooms.getMessages, roomIdArg ? { roomId: roomIdArg } : 'skip') || []) as RoomMessage[];
   const whiteboard = useQuery(api.rooms.getWhiteboardSnapshot, roomIdArg ? { roomId: roomIdArg } : 'skip') as WhiteboardSnapshot;
   const whiteboardPresence = (useQuery(api.rooms.getWhiteboardPresence, roomIdArg ? { roomId: roomIdArg } : 'skip') || []) as WhiteboardPresence[];
+  const whiteboardOpsQuery = useQuery(api.rooms.getWhiteboardOps, roomIdArg ? { roomId: roomIdArg } : 'skip');
+  const whiteboardOpsRows = useMemo(() => (whiteboardOpsQuery || []) as WhiteboardOpRow[], [whiteboardOpsQuery]);
 
   const createRoom = useMutation(api.rooms.createRoom);
   const joinRoom = useMutation(api.rooms.joinRoom);
   const leaveRoom = useMutation(api.rooms.leaveRoom);
-  const ping = useMutation(api.rooms.ping);
   const sendMessage = useMutation(api.rooms.sendMessage);
   const updateWhiteboardSnapshot = useMutation(api.rooms.updateWhiteboardSnapshot);
   const updateWhiteboardCursor = useMutation(api.rooms.updateWhiteboardCursor);
+  const appendWhiteboardOp = useMutation(api.rooms.appendWhiteboardOp);
+  const replaceWhiteboardOps = useMutation(api.rooms.replaceWhiteboardOps);
 
   const canUseCollab = Boolean(user && !user.isGuest);
   const normalizedJoinCode = useMemo(() => joinCode.trim().toUpperCase(), [joinCode]);
   const meParticipant = participants.find((p) => user && p.userId === user.id);
   const canEditBoard = Boolean(meParticipant && meParticipant.role !== 'viewer');
 
+  const whiteboardOps = useMemo<SharedWhiteboardOp[]>(() => decodeWhiteboardOps(whiteboardOpsRows), [whiteboardOpsRows]);
+
+  const activeDrawingUserIds = useMemo(() => getActiveDrawingUserIds(whiteboardOps), [whiteboardOps]);
+
   const remoteCursors = whiteboardPresence
     .filter((row) => !user || row.userId !== user.id)
-    .map((row) => ({
+    .map((row): RemoteCursorView => ({
       userId: String(row.userId),
       username: String(row.username || 'User'),
       color: String(row.color || '#60a5fa'),
       cursorX: typeof row.cursorX === 'number' ? row.cursorX : undefined,
       cursorY: typeof row.cursorY === 'number' ? row.cursorY : undefined,
       isSharing: Boolean(row.isSharing),
+      isDrawing: activeDrawingUserIds.has(String(row.userId)),
     }));
 
   useEffect(() => {
@@ -98,15 +140,11 @@ export const CollaboratePanel: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    if (!roomId || !user || user.isGuest) return;
-    if (!roomIdArg || !userIdArg) return;
-    const tick = () => {
-      void ping({ roomId: roomIdArg, userId: userIdArg }).catch(() => {});
-    };
-    tick();
-    const id = window.setInterval(tick, 10_000);
-    return () => window.clearInterval(id);
-  }, [roomId, roomIdArg, user, userIdArg, ping]);
+    const isSharing = boardMode === 'room' && showBoard && isSharingBoard;
+    onWhiteboardPresenceChange?.(isSharing);
+  }, [boardMode, isSharingBoard, onWhiteboardPresenceChange, showBoard]);
+
+  useEffect(() => () => onWhiteboardPresenceChange?.(false), [onWhiteboardPresenceChange]);
 
   const setToast = (msg: string) => {
     setFeedback(msg);
@@ -225,9 +263,45 @@ export const CollaboratePanel: React.FC = () => {
     }, 240);
   };
 
+  const onAppendBoardOp = async (op: SharedWhiteboardOp) => {
+    if (!roomIdArg || !userIdArg) return;
+    const payload = encodeWhiteboardOpPayload(op);
+    try {
+      await appendWhiteboardOp({
+        roomId: roomIdArg,
+        userId: userIdArg,
+        opId: op.opId,
+        kind: op.kind,
+        payload,
+      });
+    } catch {
+      setToast('Failed to sync whiteboard op');
+    }
+  };
+
+  const onReplaceBoardOps = async (ops: SharedWhiteboardOp[]) => {
+    if (!roomIdArg || !userIdArg) return;
+    try {
+      await replaceWhiteboardOps({
+        roomId: roomIdArg,
+        userId: userIdArg,
+        ops: ops.map((op) => ({
+          opId: op.opId,
+          kind: op.kind,
+          payload: encodeWhiteboardOpPayload(op),
+          createdBy: op.createdBy ? (op.createdBy as unknown as Id<'users'>) : undefined,
+          createdAt: op.createdAt,
+        })),
+      });
+    } catch {
+      setToast('Failed to rewrite whiteboard history');
+    }
+  };
+
   const onBoardCursor = (x: number, y: number) => {
-    if (!roomId || !user) return;
     if (boardMode !== 'room') return;
+    onWhiteboardCursorSample?.({ x, y });
+    if (!roomId || !user) return;
     if (!roomIdArg || !userIdArg) return;
     const now = Date.now();
     if (now - lastCursorSendRef.current < 80) return;
@@ -405,6 +479,9 @@ export const CollaboratePanel: React.FC = () => {
                   onSnapshotChange={boardMode === 'room' ? onBoardSnapshot : undefined}
                   onCursorMove={boardMode === 'room' ? onBoardCursor : undefined}
                   remoteCursors={boardMode === 'room' ? remoteCursors : []}
+                  whiteboardOps={boardMode === 'room' ? whiteboardOps : []}
+                  onAppendWhiteboardOp={boardMode === 'room' ? onAppendBoardOp : undefined}
+                  onReplaceWhiteboardOps={boardMode === 'room' ? onReplaceBoardOps : undefined}
                   desktopCompactBreakpoint={WHITEBOARD_COMPACT_BREAKPOINTS.collaborateEmbedded.desktop}
                   mobileCompactBreakpoint={WHITEBOARD_COMPACT_BREAKPOINTS.collaborateEmbedded.mobile}
                 />
@@ -429,7 +506,11 @@ export const CollaboratePanel: React.FC = () => {
                     <div className="opacity-60 uppercase text-[10px]">{p.role || 'editor'}</div>
                   </div>
                   <div className="mt-1 text-[10px] opacity-60">
-                    {p.currentFile ? `Editing ${p.currentFile}` : (p.currentTask || 'Idle')}
+                    {activeDrawingUserIds.has(String(p.userId))
+                      ? 'Drawing on whiteboard'
+                      : p.currentFile
+                        ? `Editing ${p.currentFile}`
+                        : (p.currentTask || 'Idle')}
                   </div>
                 </div>
               ))
@@ -515,6 +596,9 @@ export const CollaboratePanel: React.FC = () => {
               onSnapshotChange={boardMode === 'room' ? onBoardSnapshot : undefined}
               onCursorMove={boardMode === 'room' ? onBoardCursor : undefined}
               remoteCursors={boardMode === 'room' ? remoteCursors : []}
+              whiteboardOps={boardMode === 'room' ? whiteboardOps : []}
+              onAppendWhiteboardOp={boardMode === 'room' ? onAppendBoardOp : undefined}
+              onReplaceWhiteboardOps={boardMode === 'room' ? onReplaceBoardOps : undefined}
               desktopCompactBreakpoint={WHITEBOARD_COMPACT_BREAKPOINTS.fullscreen.desktop}
               mobileCompactBreakpoint={WHITEBOARD_COMPACT_BREAKPOINTS.fullscreen.mobile}
             />

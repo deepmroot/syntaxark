@@ -1,6 +1,17 @@
-import React, { useRef, useState, useEffect, useCallback } from 'react';
+import React, { useRef, useState, useEffect, useCallback, useReducer } from 'react';
 import { useEditor } from '../../store/useEditor';
 import { WHITEBOARD_COMPACT_BREAKPOINTS } from '../../config/whiteboard';
+import type {
+  SharedWhiteboardOp,
+  SharedWhiteboardPoint,
+  SharedWhiteboardStyle,
+  SharedWhiteboardTextObject,
+} from '../../collab/whiteboard/types';
+import { isRasterWhiteboardOp } from '../../collab/whiteboard/ops';
+import {
+  initialWhiteboardHistoryState,
+  whiteboardHistoryReducer,
+} from '../../collab/whiteboard/reducer';
 import {
   Pencil, Pen, Highlighter, Eraser, Square, Circle, Minus, Type,
   Undo2, Redo2, Trash2, Download, PaintBucket, MousePointer, RotateCcw,
@@ -20,15 +31,7 @@ type Tool =
   | 'stamp-cloud' | 'stamp-note' | 'stamp-actor' | 'stamp-process';
 
 interface Point { x: number; y: number }
-interface TextObject {
-  id: string;
-  text: string;
-  x: number;
-  y: number;
-  color: string;
-  size: number;
-  opacity: number;
-}
+interface TextObject extends SharedWhiteboardTextObject {}
 type AssistLevel = 'off' | 'low' | 'medium' | 'high';
 interface RemoteCursor {
   userId: string;
@@ -37,7 +40,12 @@ interface RemoteCursor {
   cursorX?: number;
   cursorY?: number;
   isSharing?: boolean;
+  isDrawing?: boolean;
 }
+
+type SharedShapeTool = Extract<Tool, 'line' | 'rectangle' | 'circle' | 'triangle' | 'diamond' | 'star' | 'arrow'>;
+type SharedFreeTool = Extract<Tool, 'pencil' | 'pen' | 'marker' | 'eraser'>;
+type SharedStampTool = Extract<Tool, 'stamp-flowbox' | 'stamp-decision' | 'stamp-database' | 'stamp-server' | 'stamp-cloud' | 'stamp-note' | 'stamp-actor' | 'stamp-process'>;
 
 /* ═══════════════════ persistent state (survives close/open) ═══════════════════ */
 
@@ -269,6 +277,90 @@ function drawStamp(ctx: CanvasRenderingContext2D, tool: Tool, x: number, y: numb
   ctx.restore();
 }
 
+function applyStrokeStyle(ctx: CanvasRenderingContext2D, style: SharedWhiteboardStyle, bgColor: string) {
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.globalAlpha = style.opacity / 100;
+  ctx.globalCompositeOperation = 'source-over';
+  if (style.tool === 'eraser') {
+    ctx.strokeStyle = bgColor;
+    ctx.lineWidth = style.size * 4;
+  } else if (style.tool === 'marker') {
+    ctx.strokeStyle = style.color;
+    ctx.lineWidth = style.size * 4;
+    ctx.globalAlpha = 0.3;
+  } else if (style.tool === 'pen') {
+    ctx.strokeStyle = style.color;
+    ctx.lineWidth = style.size * 2;
+  } else {
+    ctx.strokeStyle = style.color;
+    ctx.lineWidth = style.size;
+  }
+  if (style.doFill) ctx.fillStyle = style.fillColor;
+}
+
+function drawShapeWithStyle(
+  ctx: CanvasRenderingContext2D,
+  style: SharedWhiteboardStyle,
+  from: SharedWhiteboardPoint,
+  to: SharedWhiteboardPoint,
+) {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const end = { x: from.x + dx, y: from.y + dy };
+  ctx.beginPath();
+  switch (style.tool as SharedShapeTool) {
+    case 'line':
+      ctx.moveTo(from.x, from.y); ctx.lineTo(end.x, end.y); ctx.stroke(); break;
+    case 'arrow': {
+      const a = Math.atan2(dy, dx), hl = Math.max(12, style.size * 4);
+      ctx.moveTo(from.x, from.y); ctx.lineTo(end.x, end.y); ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(end.x, end.y); ctx.lineTo(end.x - hl * Math.cos(a - Math.PI / 6), end.y - hl * Math.sin(a - Math.PI / 6));
+      ctx.moveTo(end.x, end.y); ctx.lineTo(end.x - hl * Math.cos(a + Math.PI / 6), end.y - hl * Math.sin(a + Math.PI / 6));
+      ctx.stroke(); break;
+    }
+    case 'rectangle':
+      if (style.doFill) ctx.fillRect(from.x, from.y, dx, dy);
+      ctx.strokeRect(from.x, from.y, dx, dy); break;
+    case 'circle': {
+      const cx = from.x + dx / 2, cy = from.y + dy / 2;
+      ctx.ellipse(cx, cy, Math.abs(dx / 2), Math.abs(dy / 2), 0, 0, Math.PI * 2);
+      if (style.doFill) ctx.fill(); ctx.stroke(); break;
+    }
+    case 'triangle':
+      ctx.moveTo(from.x + dx / 2, from.y); ctx.lineTo(end.x, end.y); ctx.lineTo(from.x, end.y);
+      ctx.closePath(); if (style.doFill) ctx.fill(); ctx.stroke(); break;
+    case 'diamond':
+      diamondPath(ctx, from.x + dx / 2, from.y + dy / 2, Math.abs(dx), Math.abs(dy));
+      if (style.doFill) ctx.fill(); ctx.stroke(); break;
+    case 'star': {
+      const r = Math.max(Math.abs(dx), Math.abs(dy)) / 2;
+      starPath(ctx, from.x + dx / 2, from.y + dy / 2, 5, r, r * 0.4);
+      if (style.doFill) ctx.fill(); ctx.stroke(); break;
+    }
+  }
+}
+
+function drawStrokePath(
+  ctx: CanvasRenderingContext2D,
+  style: SharedWhiteboardStyle,
+  points: SharedWhiteboardPoint[],
+  bgColor: string,
+) {
+  if (points.length === 0) return;
+  applyStrokeStyle(ctx, style, bgColor);
+  ctx.beginPath();
+  ctx.moveTo(points[0].x, points[0].y);
+  if (points.length === 1) ctx.lineTo(points[0].x + 0.1, points[0].y + 0.1);
+  for (let i = 1; i < points.length; i += 1) {
+    ctx.lineTo(points[i].x, points[i].y);
+  }
+  ctx.stroke();
+  ctx.closePath();
+  ctx.globalAlpha = 1;
+}
+
 /* ═══════════════════ toolbar button ═══════════════════ */
 
 const Btn: React.FC<{
@@ -311,6 +403,9 @@ export const DrawingCanvas: React.FC<{
   onSnapshotChange?: (snapshot: string) => void;
   onCursorMove?: (x: number, y: number) => void;
   remoteCursors?: RemoteCursor[];
+  whiteboardOps?: SharedWhiteboardOp[];
+  onAppendWhiteboardOp?: (op: SharedWhiteboardOp) => void | Promise<void>;
+  onReplaceWhiteboardOps?: (ops: SharedWhiteboardOp[]) => void | Promise<void>;
   showSplitSuggestion?: boolean;
   desktopCompactBreakpoint?: number;
   mobileCompactBreakpoint?: number;
@@ -326,6 +421,9 @@ export const DrawingCanvas: React.FC<{
   onSnapshotChange,
   onCursorMove,
   remoteCursors = [],
+  whiteboardOps = [],
+  onAppendWhiteboardOp,
+  onReplaceWhiteboardOps,
   showSplitSuggestion = false,
   desktopCompactBreakpoint = WHITEBOARD_COMPACT_BREAKPOINTS.default.desktop,
   mobileCompactBreakpoint = WHITEBOARD_COMPACT_BREAKPOINTS.default.mobile,
@@ -397,6 +495,11 @@ export const DrawingCanvas: React.FC<{
   const lastSnapshotSentRef = useRef('');
   const lastAppliedSnapshotVersionRef = useRef<number>(0);
   const lastLocalDrawAtRef = useRef<number>(0);
+  const appliedWhiteboardOpIdsRef = useRef<Set<string>>(new Set());
+  const strokePointsRef = useRef<Point[]>([]);
+  const checkpointInFlightRef = useRef(false);
+  const lastRemoteOpAtRef = useRef<Record<string, number>>({});
+  const [historyState, dispatchHistory] = useReducer(whiteboardHistoryReducer, initialWhiteboardHistoryState);
 
   const isStamp = (tool as string).startsWith('stamp-');
   const isFree = ['pencil', 'pen', 'marker', 'eraser'].includes(tool);
@@ -411,6 +514,21 @@ export const DrawingCanvas: React.FC<{
   };
   const assistOptions: AssistLevel[] = ['off', 'low', 'medium', 'high'];
   const assistLabel = assistLevel === 'off' ? 'Off' : assistLevel[0].toUpperCase() + assistLevel.slice(1);
+  const makeOpId = useCallback(
+    () => `${localUserId || 'local'}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
+    [localUserId],
+  );
+  const getCurrentStyle = useCallback(
+    (nextTool?: SharedWhiteboardStyle['tool']): SharedWhiteboardStyle => ({
+      tool: nextTool || (tool as SharedWhiteboardStyle['tool']),
+      color,
+      fillColor,
+      size,
+      opacity,
+      doFill,
+    }),
+    [tool, color, fillColor, size, opacity, doFill],
+  );
   const cycleAssistLevel = () =>
     setAssistLevel((prev) => (prev === 'off' ? 'low' : prev === 'low' ? 'medium' : prev === 'medium' ? 'high' : 'off'));
 
@@ -497,10 +615,18 @@ export const DrawingCanvas: React.FC<{
       vctx.lineTo(sx, sy + 24);
       vctx.closePath();
       vctx.fill();
-      const label = `${cursor.username}${cursor.isSharing ? ' (sharing)' : ''}`;
+      if (cursor.isDrawing) {
+        vctx.strokeStyle = cursor.color || '#60a5fa';
+        vctx.lineWidth = 2;
+        vctx.beginPath();
+        vctx.arc(sx + 2, sy + 4, 10, 0, Math.PI * 2);
+        vctx.stroke();
+      }
+      const suffix = cursor.isDrawing ? ' (drawing)' : cursor.isSharing ? ' (sharing)' : '';
+      const label = `${cursor.username}${suffix}`;
       vctx.font = '11px sans-serif';
       const tw = vctx.measureText(label).width;
-      vctx.fillStyle = 'rgba(0,0,0,0.65)';
+      vctx.fillStyle = cursor.isDrawing ? 'rgba(37,99,235,0.85)' : 'rgba(0,0,0,0.65)';
       vctx.fillRect(sx + 12, sy + 4, tw + 8, 16);
       vctx.fillStyle = '#fff';
       vctx.fillText(label, sx + 16, sy + 16);
@@ -572,7 +698,6 @@ export const DrawingCanvas: React.FC<{
       ctx.fillStyle = bgColor;
       ctx.fillRect(0, 0, c.width, c.height);
       ctx.drawImage(img, 0, 0, c.width, c.height);
-      setTextObjects([]);
       const snapshot = ctx.getImageData(0, 0, c.width, c.height);
       undos.current = [snapshot];
       redos.current = [];
@@ -614,6 +739,12 @@ export const DrawingCanvas: React.FC<{
   /* re-render on pan/zoom/grid changes */
   useEffect(() => { renderView(); }, [pan, zoom, showGrid, renderView]);
 
+  const buildBaseSnapshot = useCallback(() => {
+    const base = canvasRef.current;
+    if (!base) return null;
+    return base.toDataURL('image/png');
+  }, []);
+
   const buildMergedSnapshot = useCallback(() => {
     const base = canvasRef.current;
     if (!base) return null;
@@ -627,16 +758,166 @@ export const DrawingCanvas: React.FC<{
     return temp.toDataURL('image/png');
   }, []);
 
+  const sharedOpsEnabled = Boolean(onAppendWhiteboardOp && onReplaceWhiteboardOps);
+
   const emitSnapshotChange = useCallback(() => {
     if (!onSnapshotChange) return;
     if (snapshotDebounceRef.current) window.clearTimeout(snapshotDebounceRef.current);
     snapshotDebounceRef.current = window.setTimeout(() => {
-      const snapshot = buildMergedSnapshot();
+      const snapshot = buildBaseSnapshot();
       if (!snapshot || snapshot === lastSnapshotSentRef.current) return;
       lastSnapshotSentRef.current = snapshot;
       onSnapshotChange(snapshot);
     }, 300);
-  }, [onSnapshotChange, buildMergedSnapshot]);
+  }, [onSnapshotChange, buildBaseSnapshot]);
+
+  const countRasterOps = useCallback(
+    (ops: SharedWhiteboardOp[]) => ops.filter(isRasterWhiteboardOp).length,
+    [],
+  );
+
+  const requestCheckpoint = useCallback(async (ops: SharedWhiteboardOp[]) => {
+    if (!sharedOpsEnabled || !onSnapshotChange || checkpointInFlightRef.current) return;
+    if (countRasterOps(ops) < 8) return;
+    const snapshot = buildBaseSnapshot();
+    if (!snapshot) return;
+    checkpointInFlightRef.current = true;
+    lastSnapshotSentRef.current = snapshot;
+    try {
+      await Promise.resolve(onSnapshotChange(snapshot));
+      dispatchHistory({ type: 'checkpoint_retain_text' });
+    } finally {
+      window.setTimeout(() => {
+        checkpointInFlightRef.current = false;
+      }, 400);
+    }
+  }, [buildBaseSnapshot, countRasterOps, onSnapshotChange, sharedOpsEnabled]);
+
+  const appendWhiteboardOp = useCallback((op: SharedWhiteboardOp) => {
+    appliedWhiteboardOpIdsRef.current.add(op.opId);
+    if (sharedOpsEnabled) {
+      const nextHistory = [...historyState.history, op];
+      dispatchHistory({ type: 'append', op });
+      void requestCheckpoint(nextHistory);
+    }
+    void onAppendWhiteboardOp?.(op);
+  }, [historyState.history, onAppendWhiteboardOp, requestCheckpoint, sharedOpsEnabled]);
+
+  const applyWhiteboardOp = useCallback((op: SharedWhiteboardOp) => {
+    const c = canvasRef.current;
+    const ctx = c?.getContext('2d');
+    if (!c || !ctx) return;
+
+    if (op.kind === 'clear') {
+      ctx.fillStyle = bgColor;
+      ctx.fillRect(0, 0, c.width, c.height);
+      setTextObjects([]);
+      const baseline = ctx.getImageData(0, 0, c.width, c.height);
+      undos.current = [baseline];
+      redos.current = [];
+      renderView();
+      return;
+    }
+
+    if (op.kind === 'text_upsert') {
+      setTextObjects((prev) => {
+        const existingIndex = prev.findIndex((item) => item.id === op.textObject.id);
+        if (existingIndex === -1) return [...prev, op.textObject];
+        const next = [...prev];
+        next[existingIndex] = op.textObject;
+        return next;
+      });
+      renderView();
+      return;
+    }
+
+    if (op.kind === 'stroke') {
+      drawStrokePath(ctx, op.style, op.points, bgColor);
+      const snapshot = ctx.getImageData(0, 0, c.width, c.height);
+      undos.current = [snapshot];
+      redos.current = [];
+      renderView();
+      return;
+    }
+
+    if (op.kind === 'shape') {
+      applyStrokeStyle(ctx, op.style, bgColor);
+      drawShapeWithStyle(ctx, op.style, op.from, op.to);
+      const snapshot = ctx.getImageData(0, 0, c.width, c.height);
+      undos.current = [snapshot];
+      redos.current = [];
+      renderView();
+      return;
+    }
+
+    if (op.kind === 'stamp') {
+      drawStamp(ctx, op.stamp.tool as SharedStampTool, op.stamp.x, op.stamp.y, op.stamp.color, isDark, op.stamp.label);
+      const snapshot = ctx.getImageData(0, 0, c.width, c.height);
+      undos.current = [snapshot];
+      redos.current = [];
+      renderView();
+    }
+  }, [bgColor, isDark, renderView]);
+
+  const rebuildFromSnapshotAndOps = useCallback(async (ops: SharedWhiteboardOp[]) => {
+    const c = canvasRef.current;
+    const ctx = c?.getContext('2d');
+    if (!c || !ctx) return;
+
+    const applyOps = () => {
+      setTextObjects([]);
+      appliedWhiteboardOpIdsRef.current = new Set();
+      ops.forEach((op) => {
+        appliedWhiteboardOpIdsRef.current.add(op.opId);
+        applyWhiteboardOp(op);
+      });
+      dispatchHistory({ type: 'sync', ops });
+      const baseline = ctx.getImageData(0, 0, c.width, c.height);
+      undos.current = [baseline];
+      redos.current = [];
+      renderView();
+    };
+
+    ctx.clearRect(0, 0, c.width, c.height);
+    ctx.fillStyle = bgColor;
+    ctx.fillRect(0, 0, c.width, c.height);
+
+    if (!initialSnapshot) {
+      applyOps();
+      return;
+    }
+
+    const img = new Image();
+    img.onload = () => {
+      ctx.drawImage(img, 0, 0, c.width, c.height);
+      applyOps();
+    };
+    img.src = initialSnapshot;
+  }, [applyWhiteboardOp, bgColor, initialSnapshot, renderView]);
+
+  useEffect(() => {
+    const nextIds = whiteboardOps.map((op) => op.opId);
+    const appliedIds = Array.from(appliedWhiteboardOpIdsRef.current);
+
+    const needsFullRebuild =
+      nextIds.length < appliedIds.length ||
+      appliedIds.some((id) => !nextIds.includes(id));
+
+    if (needsFullRebuild) {
+      void rebuildFromSnapshotAndOps(whiteboardOps);
+      return;
+    }
+
+    whiteboardOps.forEach((op) => {
+      if (appliedWhiteboardOpIdsRef.current.has(op.opId)) return;
+      appliedWhiteboardOpIdsRef.current.add(op.opId);
+      if (op.createdBy && localUserId && op.createdBy !== localUserId) {
+        lastRemoteOpAtRef.current[op.createdBy] = op.createdAt || Date.now();
+      }
+      applyWhiteboardOp(op);
+    });
+    dispatchHistory({ type: 'sync', ops: whiteboardOps });
+  }, [applyWhiteboardOp, localUserId, rebuildFromSnapshotAndOps, whiteboardOps]);
 
   /* ─── save state on unmount ─── */
   useEffect(() => {
@@ -661,25 +942,48 @@ export const DrawingCanvas: React.FC<{
     redos.current = [];
     lastLocalDrawAtRef.current = Date.now();
     renderView();
-    emitSnapshotChange();
-  }, [emitSnapshotChange, renderView]);
+    if (!sharedOpsEnabled) {
+      emitSnapshotChange();
+    }
+  }, [emitSnapshotChange, renderView, sharedOpsEnabled]);
 
   const undo = useCallback(() => {
+    if (sharedOpsEnabled && onReplaceWhiteboardOps && localUserId) {
+      const targetIndex = [...historyState.history]
+        .map((op, index) => ({ op, index }))
+        .reverse()
+        .find(({ op }) => op.createdBy === localUserId)?.index;
+      if (targetIndex === undefined) return;
+      const nextHistory = historyState.history.filter((_, index) => index !== targetIndex);
+      dispatchHistory({ type: 'undo_user', userId: localUserId });
+      void Promise.resolve(onReplaceWhiteboardOps(nextHistory)).then(() => rebuildFromSnapshotAndOps(nextHistory));
+      return;
+    }
+
     const c = canvasRef.current;
     if (!c || undos.current.length <= 1) return;
     redos.current.push(undos.current.pop()!);
     c.getContext('2d')!.putImageData(undos.current[undos.current.length - 1], 0, 0);
     renderView();
-  }, [renderView]);
+  }, [historyState.history, localUserId, onReplaceWhiteboardOps, rebuildFromSnapshotAndOps, renderView, sharedOpsEnabled]);
 
   const redo = useCallback(() => {
+    if (sharedOpsEnabled && onReplaceWhiteboardOps) {
+      const nextOp = historyState.redo[0];
+      if (!nextOp) return;
+      const nextHistory = [...historyState.history, nextOp];
+      dispatchHistory({ type: 'redo' });
+      void Promise.resolve(onReplaceWhiteboardOps(nextHistory)).then(() => rebuildFromSnapshotAndOps(nextHistory));
+      return;
+    }
+
     const c = canvasRef.current;
     if (!c || redos.current.length === 0) return;
     const e = redos.current.pop()!;
     undos.current.push(e);
     c.getContext('2d')!.putImageData(e, 0, 0);
     renderView();
-  }, [renderView]);
+  }, [historyState.history, historyState.redo, onReplaceWhiteboardOps, rebuildFromSnapshotAndOps, renderView, sharedOpsEnabled]);
 
   /* ─── keyboard ─── */
   useEffect(() => {
@@ -818,20 +1122,14 @@ export const DrawingCanvas: React.FC<{
 
   /* ─── setup drawing ctx ─── */
   const setupCtx = useCallback((ctx: CanvasRenderingContext2D) => {
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    ctx.globalAlpha = opacity / 100;
-    ctx.globalCompositeOperation = 'source-over';
-    if (tool === 'eraser') {
-      ctx.strokeStyle = bgColor; ctx.lineWidth = size * 4;
-    } else if (tool === 'marker') {
-      ctx.strokeStyle = color; ctx.lineWidth = size * 4; ctx.globalAlpha = 0.3;
-    } else if (tool === 'pen') {
-      ctx.strokeStyle = color; ctx.lineWidth = size * 2;
-    } else {
-      ctx.strokeStyle = color; ctx.lineWidth = size;
-    }
-    if (doFill) ctx.fillStyle = fillColor;
+    applyStrokeStyle(ctx, {
+      tool: tool as SharedWhiteboardStyle['tool'],
+      color,
+      fillColor,
+      size,
+      opacity,
+      doFill,
+    }, bgColor);
   }, [tool, color, fillColor, size, opacity, doFill, bgColor]);
 
   const drawShape = useCallback((ctx: CanvasRenderingContext2D, from: Point, to: Point) => {
@@ -997,6 +1295,7 @@ export const DrawingCanvas: React.FC<{
     setDrawing(true);
     setOrigin(p);
     lastMouseRef.current = p;
+    strokePointsRef.current = [p];
 
     if (isFree) {
       const ctx = canvasRef.current!.getContext('2d')!;
@@ -1048,6 +1347,7 @@ export const DrawingCanvas: React.FC<{
         assistPrevPointRef.current = prevMouse;
         assistSmoothPointRef.current = prevMouse;
       }
+      strokePointsRef.current.push(p);
       if (isAssistableFree) {
         const prevRaw = assistPrevPointRef.current ?? p;
         const smoothPrev = assistSmoothPointRef.current ?? prevRaw;
@@ -1104,10 +1404,23 @@ export const DrawingCanvas: React.FC<{
   const onUp = () => {
     if (panning) { setPanning(false); return; }
     if (movingTextIdRef.current) {
+      const movedId = movingTextIdRef.current;
       movingTextIdRef.current = null;
+      const movedText = textObjectsRef.current.find((item) => item.id === movedId);
+      if (movedText) {
+        appendWhiteboardOp({
+          opId: makeOpId(),
+          kind: 'text_upsert',
+          textObject: movedText,
+          createdBy: localUserId,
+          createdAt: Date.now(),
+        });
+      }
       lastLocalDrawAtRef.current = Date.now();
       renderView();
-      emitSnapshotChange();
+      if (!sharedOpsEnabled) {
+        emitSnapshotChange();
+      }
       return;
     }
     if (!drawing) return;
@@ -1116,6 +1429,15 @@ export const DrawingCanvas: React.FC<{
     if (isFree) {
       const ctx = canvasRef.current!.getContext('2d')!;
       ctx.closePath(); ctx.globalAlpha = 1;
+      appendWhiteboardOp({
+        opId: makeOpId(),
+        kind: 'stroke',
+        style: getCurrentStyle(tool as SharedFreeTool),
+        points: strokePointsRef.current,
+        createdBy: localUserId,
+        createdAt: Date.now(),
+      });
+      strokePointsRef.current = [];
       assistPrevPointRef.current = null;
       assistSmoothPointRef.current = null;
       snap();
@@ -1128,6 +1450,16 @@ export const DrawingCanvas: React.FC<{
 
       const o = overlayRef.current!;
       o.getContext('2d')!.clearRect(0, 0, o.width, o.height);
+
+      appendWhiteboardOp({
+        opId: makeOpId(),
+        kind: 'shape',
+        style: getCurrentStyle(tool as SharedShapeTool),
+        from: origin,
+        to: lastMouseRef.current,
+        createdBy: localUserId,
+        createdAt: Date.now(),
+      });
 
       setOrigin(null);
       snap();
@@ -1165,7 +1497,21 @@ export const DrawingCanvas: React.FC<{
   const commitStamp = () => {
     if (!stampPrompt) return;
     const ctx = canvasRef.current!.getContext('2d')!;
-    drawStamp(ctx, stampPrompt.tool, stampPrompt.pos.x, stampPrompt.pos.y, color, isDark, stampLabel.trim() || undefined);
+    const label = stampLabel.trim() || undefined;
+    drawStamp(ctx, stampPrompt.tool, stampPrompt.pos.x, stampPrompt.pos.y, color, isDark, label);
+    appendWhiteboardOp({
+      opId: makeOpId(),
+      kind: 'stamp',
+      stamp: {
+        tool: stampPrompt.tool as SharedStampTool,
+        x: stampPrompt.pos.x,
+        y: stampPrompt.pos.y,
+        color,
+        label,
+      },
+      createdBy: localUserId,
+      createdAt: Date.now(),
+    });
     snap();
     setStampPrompt(null);
     setStampLabel('');
@@ -1183,9 +1529,18 @@ export const DrawingCanvas: React.FC<{
       opacity,
     };
     setTextObjects((prev) => [...prev, next]);
+    appendWhiteboardOp({
+      opId: makeOpId(),
+      kind: 'text_upsert',
+      textObject: next,
+      createdBy: localUserId,
+      createdAt: Date.now(),
+    });
     lastLocalDrawAtRef.current = Date.now();
     renderView();
-    emitSnapshotChange();
+    if (!sharedOpsEnabled) {
+      emitSnapshotChange();
+    }
     setTextPos(null);
     setTextVal('');
   };
@@ -1196,6 +1551,12 @@ export const DrawingCanvas: React.FC<{
     ctx.fillStyle = bgColor;
     ctx.fillRect(0, 0, c.width, c.height);
     setTextObjects([]);
+    appendWhiteboardOp({
+      opId: makeOpId(),
+      kind: 'clear',
+      createdBy: localUserId,
+      createdAt: Date.now(),
+    });
     snap();
   };
 
@@ -1224,9 +1585,16 @@ export const DrawingCanvas: React.FC<{
       setPan(newPan);
     }
 
+    appendWhiteboardOp({
+      opId: makeOpId(),
+      kind: 'clear',
+      createdBy: localUserId,
+      createdAt: Date.now(),
+    });
+
     lastLocalDrawAtRef.current = Date.now();
     renderView();
-    if (onSnapshotChange) {
+    if (onSnapshotChange && !sharedOpsEnabled) {
       const snapshot = c.toDataURL('image/png');
       lastSnapshotSentRef.current = snapshot;
       onSnapshotChange(snapshot);

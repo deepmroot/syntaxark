@@ -297,6 +297,12 @@ export const dismantleRoom = mutation({
       .collect();
     for (const row of wbPresence) await ctx.db.delete(row._id);
 
+    const wbOps = await ctx.db
+      .query("roomWhiteboardOps")
+      .withIndex("by_room", (q) => q.eq("roomId", args.roomId))
+      .collect();
+    for (const row of wbOps) await ctx.db.delete(row._id);
+
     const voicePresence = await ctx.db
       .query("roomVoicePresence")
       .withIndex("by_room", (q) => q.eq("roomId", args.roomId))
@@ -559,6 +565,7 @@ export const updateWhiteboardSnapshot = mutation({
     if (authUserId !== args.userId) throw new Error("Unauthorized");
     const membership = await ensureRoomMember(ctx, args.roomId, args.userId);
     if (!membership) throw new Error("Not a room member");
+    if (!canEditInRoom(membership)) throw new Error("Read-only role");
     if (args.snapshot.length > 2_500_000) throw new Error("Whiteboard snapshot too large");
 
     const existing = await ctx.db
@@ -579,6 +586,116 @@ export const updateWhiteboardSnapshot = mutation({
       updatedBy: args.userId,
       updatedAt: Date.now(),
     });
+
+    const ops = await ctx.db
+      .query("roomWhiteboardOps")
+      .withIndex("by_room", (q) => q.eq("roomId", args.roomId))
+      .collect();
+    for (const op of ops) {
+      if (op.kind !== "text_upsert") {
+        await ctx.db.delete(op._id);
+      }
+    }
+  },
+});
+
+export const getWhiteboardOps = query({
+  args: { roomId: v.optional(v.id("rooms")) },
+  handler: async (ctx, args) => {
+    if (!args.roomId) return [];
+    const authUserId = await requireAuthedUser(ctx);
+    const membership = await ensureRoomMember(ctx, args.roomId, authUserId);
+    if (!membership) return [];
+    return await ctx.db
+      .query("roomWhiteboardOps")
+      .withIndex("by_room", (q) => q.eq("roomId", args.roomId!))
+      .collect();
+  },
+});
+
+export const appendWhiteboardOp = mutation({
+  args: {
+    roomId: v.id("rooms"),
+    userId: v.id("users"),
+    opId: v.string(),
+    kind: v.string(),
+    payload: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const authUserId = await requireAuthedUser(ctx);
+    if (authUserId !== args.userId) throw new Error("Unauthorized");
+    const membership = await ensureRoomMember(ctx, args.roomId, args.userId);
+    if (!membership) throw new Error("Not a room member");
+    if (!canEditInRoom(membership)) throw new Error("Read-only role");
+
+    const duplicate = await ctx.db
+      .query("roomWhiteboardOps")
+      .withIndex("by_room", (q) => q.eq("roomId", args.roomId))
+      .filter((q) => q.eq(q.field("opId"), args.opId))
+      .first();
+    if (duplicate) return;
+
+    if (args.kind === "clear") {
+      const existingOps = await ctx.db
+        .query("roomWhiteboardOps")
+        .withIndex("by_room", (q) => q.eq("roomId", args.roomId))
+        .collect();
+      for (const op of existingOps) {
+        await ctx.db.delete(op._id);
+      }
+    }
+
+    await ctx.db.insert("roomWhiteboardOps", {
+      roomId: args.roomId,
+      opId: args.opId,
+      kind: args.kind,
+      payload: args.payload,
+      createdBy: args.userId,
+      createdAt: Date.now(),
+    });
+  },
+});
+
+export const replaceWhiteboardOps = mutation({
+  args: {
+    roomId: v.id("rooms"),
+    userId: v.id("users"),
+    ops: v.array(v.object({
+      opId: v.string(),
+      kind: v.string(),
+      payload: v.optional(v.string()),
+      createdBy: v.optional(v.id("users")),
+      createdAt: v.optional(v.number()),
+    })),
+  },
+  handler: async (ctx, args) => {
+    const authUserId = await requireAuthedUser(ctx);
+    if (authUserId !== args.userId) throw new Error("Unauthorized");
+    const membership = await ensureRoomMember(ctx, args.roomId, args.userId);
+    if (!membership) throw new Error("Not a room member");
+    if (!canEditInRoom(membership)) throw new Error("Read-only role");
+
+    const existingOps = await ctx.db
+      .query("roomWhiteboardOps")
+      .withIndex("by_room", (q) => q.eq("roomId", args.roomId))
+      .collect();
+    for (const op of existingOps) {
+      await ctx.db.delete(op._id);
+    }
+
+    const seen = new Set<string>();
+    for (const op of args.ops) {
+      if (seen.has(op.opId)) continue;
+      seen.add(op.opId);
+      await ctx.db.insert("roomWhiteboardOps", {
+        roomId: args.roomId,
+        opId: op.opId,
+        kind: op.kind,
+        payload: op.payload,
+        createdBy: op.createdBy ?? args.userId,
+        createdAt: op.createdAt ?? Date.now(),
+      });
+    }
   },
 });
 

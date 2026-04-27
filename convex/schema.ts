@@ -133,6 +133,16 @@ export default defineSchema({
     .index("by_room", ["roomId"])
     .index("by_user", ["userId"]),
 
+  roomWhiteboardOps: defineTable({
+    roomId: v.id("rooms"),
+    opId: v.string(),
+    kind: v.string(),
+    payload: v.optional(v.string()),
+    createdBy: v.id("users"),
+    createdAt: v.number(),
+  })
+    .index("by_room", ["roomId"]),
+
   // Community Posts
   posts: defineTable({
     authorId: v.id("users"),

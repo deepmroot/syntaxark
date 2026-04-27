@@ -11,6 +11,10 @@ import { runner } from '../../runner/Runner';
 import { useFileSystem } from '../../store/useFileSystem';
 import { ChallengesPanel } from '../Challenges/ChallengesPanel';
 import { CollaboratePanel } from '../Collaborate/CollaboratePanel';
+import { useCollabSession } from '../../store/useCollabSession';
+import { getNodePath } from '../../collab/core/path';
+import { useRoomPresence } from '../../collab/presence/useRoomPresence';
+import { useRoomWorkspace } from '../../collab/editor/useRoomWorkspace';
 import { CommunityPanel, CreatePostModal } from '../Community/CommunityPanel';
 import { AuthModal } from '../Profile/AuthModal';
 import { UserProfileModal } from '../Profile/UserProfileModal';
@@ -21,18 +25,29 @@ import { CHALLENGES } from '../../data/challenges';
 import { WHITEBOARD_COMPACT_BREAKPOINTS } from '../../config/whiteboard';
 import { useAuth } from '../../store/useAuth';
 import { useCommunity } from '../../store/useCommunity';
-import { useConvexAuth, useMutation } from 'convex/react';
+import { useConvexAuth, useMutation, useQuery } from 'convex/react';
 import { api } from '../../../convex/_generated/api';
+import type { Id } from '../../../convex/_generated/dataModel';
 
 type SidebarTab = 'explorer' | 'challenges' | 'collaborate' | 'community' | 'search' | 'settings';
 
+type RoomParticipant = {
+  userId: string;
+  role?: 'owner' | 'editor' | 'viewer';
+};
+
 export const MainLayout: React.FC = () => {
   const { isExecuting, setExecuting, addLog, clearLogs, setExecutionTime, executionTime, setTestResults, setPreviewCode, previewCode, theme, setTheme } = useEditor();
-  const { nodes, activeFileId } = useFileSystem();
+  const { nodes, activeFileId, secondaryFileId, activePane, isSplit } = useFileSystem();
+  const { roomId } = useCollabSession();
   const { user, showAuth, setShowAuth, showProfile, setShowProfile, setAuthenticatedUser } = useAuth();
   const { showCreatePost, setShowCreatePost } = useCommunity();
   const { isAuthenticated: convexAuthenticated } = useConvexAuth();
   const ensureCurrentUserProfile = useMutation(api.auth.ensureCurrentUserProfile);
+  const roomParticipants = (useQuery(
+    api.rooms.getParticipants,
+    roomId ? { roomId: roomId as unknown as Id<'rooms'> } : 'skip',
+  ) || []) as RoomParticipant[];
   
   const [activeTab, setActiveTab] = useState<SidebarTab>('explorer');
   const [showDrawing, setShowDrawing] = useState(false);
@@ -141,7 +156,12 @@ export const MainLayout: React.FC = () => {
     switch (activeTab) {
       case 'explorer': return <Sidebar />;
       case 'challenges': return <ChallengesPanel />;
-      case 'collaborate': return <CollaboratePanel />;
+      case 'collaborate': return (
+        <CollaboratePanel
+          onWhiteboardPresenceChange={setWhiteboardSharing}
+          onWhiteboardCursorSample={reportWhiteboardCursor}
+        />
+      );
       case 'community': return <CommunityPanel />;
       case 'search': return <Search />;
       case 'settings': return <Settings />;
@@ -158,6 +178,8 @@ export const MainLayout: React.FC = () => {
     }
   };
 
+  const focusedFileId = activePane === 'secondary' && isSplit ? (secondaryFileId || activeFileId) : activeFileId;
+  const focusedFilePath = getNodePath(nodes, focusedFileId);
   const activeNode = activeFileId ? nodes[activeFileId] : null;
   const builtInChallenge = activeNode?.challengeId
     ? CHALLENGES.find(c => c.id === activeNode.challengeId)
@@ -188,13 +210,30 @@ export const MainLayout: React.FC = () => {
     if (type === 'error' || type === 'warn' || type === 'info' || type === 'log') return type;
     return 'log';
   };
+  const activeChallengeId = activeChallenge?.id;
   const isChallenge = !!activeChallenge;
   const showChallengePanel = Boolean(activeChallenge && showChallengeProblemPanel);
   const challengePanelData = showChallengePanel ? activeChallenge : null;
   const canRunChallengeTests = Boolean(activeChallenge?.functionName && activeChallenge?.testCases.length);
+  const collabEnabled = Boolean(roomId && user && !user.isGuest);
+  const meParticipant = roomParticipants.find((participant) => user && participant.userId === user.id);
+  const collabCanEdit = !collabEnabled ? true : meParticipant ? meParticipant.role !== 'viewer' : true;
+  const { reportEditorCursor, reportWhiteboardCursor, setWhiteboardSharing } = useRoomPresence({
+    roomId,
+    userId: user?.id || null,
+    enabled: collabEnabled,
+    currentFile: focusedFilePath || undefined,
+    currentTask: activeChallenge?.title,
+  });
+  useRoomWorkspace({
+    roomId,
+    userId: user?.id || null,
+    enabled: collabEnabled,
+    canSeed: collabCanEdit,
+  });
 
   useEffect(() => {
-    if (!activeChallenge) {
+    if (!activeChallengeId) {
       setShowChallengeProblemPanel(false);
       return;
     }
@@ -203,7 +242,7 @@ export const MainLayout: React.FC = () => {
     if (activeTab === 'challenges') {
       setShowSidebar(false);
     }
-  }, [activeChallenge?.id]);
+  }, [activeChallengeId, activeTab]);
   const renderChallengeDescription = (raw: string) => {
     const lines = raw.split('\n');
     const extractUrl = (text: string) => {
@@ -728,7 +767,7 @@ export const MainLayout: React.FC = () => {
                 <Group orientation="vertical">
                    <Panel id="editor-top" defaultSize={70} minSize={30}>
                      <div className="h-full flex flex-col">
-                       <div className="flex-1 min-h-0"><EditorContainer /></div>
+                       <div className="flex-1 min-h-0"><EditorContainer onPresenceCursorChange={reportEditorCursor} canEditInRoom={collabCanEdit} /></div>
                        {!showConsole && (
                          <button
                            onClick={openConsolePanel}
@@ -783,7 +822,7 @@ export const MainLayout: React.FC = () => {
                 <Group orientation="vertical">
                    <Panel id="editor-top-no-challenge" defaultSize={70} minSize={30}>
                      <div className="h-full flex flex-col">
-                       <div className="flex-1 min-h-0"><EditorContainer /></div>
+                       <div className="flex-1 min-h-0"><EditorContainer onPresenceCursorChange={reportEditorCursor} canEditInRoom={collabCanEdit} /></div>
                        {!showConsole && (
                          <button
                            onClick={openConsolePanel}

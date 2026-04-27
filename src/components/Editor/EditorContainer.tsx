@@ -1,4 +1,4 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, useState } from 'react';
 import Editor, { loader } from '@monaco-editor/react';
 import { useFileSystem } from '../../store/useFileSystem';
 import { useEditor } from '../../store/useEditor';
@@ -6,6 +6,11 @@ import { X, Columns, Plus } from 'lucide-react';
 import { LANGUAGE_MAP } from '../../data/languages';
 import { Panel, Group, Separator } from 'react-resizable-panels';
 import { FileIcon } from '../Explorer/FileIcon';
+import type { EditorPresenceCursor } from '../../collab/core/types';
+import { getNodePath } from '../../collab/core/path';
+import { useSharedEditor } from '../../collab/editor/useSharedEditor';
+import { useCollabSession } from '../../store/useCollabSession';
+import { useAuth } from '../../store/useAuth';
 
 // Configure Monaco (same as before)
 loader.init().then((monaco) => {
@@ -40,18 +45,44 @@ const EditorPane: React.FC<{
   fileId: string | null;
   isActivePane: boolean;
   onFocus: () => void;
-}> = ({ fileId, isActivePane, onFocus }) => {
+  onPresenceCursorChange?: (cursor: EditorPresenceCursor) => void;
+  canEditInRoom?: boolean;
+}> = ({ fileId, isActivePane, onFocus, onPresenceCursorChange, canEditInRoom = true }) => {
   const { nodes, updateFileContent, openFileIds, setActiveFile, closeFile, createNode } = useFileSystem();
   const { theme, monacoTheme, editorFont, fontSize, minimap, wordWrap, lineNumbers, bracketPairs, autoComplete, tabSize, smoothScrolling } = useEditor();
   const activeFile = fileId ? nodes[fileId] : null;
+  const { roomId } = useCollabSession();
+  const { user } = useAuth();
+  const roomReadOnly = Boolean(roomId && user && !user.isGuest && !canEditInRoom);
   const isDark = theme === 'vs-dark';
   const tabBarRef = useRef<HTMLDivElement>(null);
+  const activeFilePathRef = useRef<string | null>(null);
+  const [monacoEditor, setMonacoEditor] = useState<any>(null);
+  const [monacoNs, setMonacoNs] = useState<any>(null);
+  const activeFilePath = activeFile ? getNodePath(nodes, activeFile.id) : null;
 
   useEffect(() => {
     if (!fileId || !tabBarRef.current) return;
     const el = tabBarRef.current.querySelector(`[data-tab-id="${fileId}"]`) as HTMLElement | null;
     if (el) el.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
   }, [fileId]);
+
+  useEffect(() => {
+    activeFilePathRef.current = activeFilePath;
+  }, [activeFilePath]);
+
+  useSharedEditor({
+    roomId,
+    userId: user?.id || null,
+    username: user?.username,
+    fileId: activeFile?.id || null,
+    filePath: activeFilePath,
+    initialContent: activeFile?.content || '',
+    editor: monacoEditor,
+    monaco: monacoNs,
+    enabled: Boolean(roomId && user && !user.isGuest && activeFile && activeFile.type === 'file'),
+    canEdit: !roomReadOnly,
+  });
 
   const getLanguage = (extension?: string) => {
     if (!extension) return 'javascript';
@@ -66,6 +97,7 @@ const EditorPane: React.FC<{
   };
 
   const createExampleFile = () => {
+    if (roomReadOnly) return;
     const ext = 'js';
     const base = 'main';
     const rootNames = new Set(
@@ -140,6 +172,11 @@ const EditorPane: React.FC<{
 
       {/* Editor */}
       <div className="flex-1 relative">
+        {roomReadOnly && (
+          <div className={`absolute top-2 left-2 right-12 z-20 rounded-md border px-3 py-2 text-[10px] font-semibold ${isDark ? 'border-amber-500/30 bg-amber-500/10 text-amber-300' : 'border-amber-300 bg-amber-50 text-amber-700'}`}>
+            Viewer role: this room is read-only. You can follow updates, but editing is disabled.
+          </div>
+        )}
         {activeFile ? (
           <Editor
             height="100%"
@@ -147,10 +184,33 @@ const EditorPane: React.FC<{
             language={getLanguage(activeFile.extension)}
             value={activeFile.content}
             onChange={(value) => updateFileContent(activeFile.id, value || '')}
-            onMount={(editor) => {
-                editor.onDidFocusEditorText(() => onFocus());
+            onMount={(editor, monaco) => {
+              setMonacoEditor(editor);
+              setMonacoNs(monaco);
+
+              const emitCursorPresence = () => {
+                if (!onPresenceCursorChange) return;
+                const position = editor.getPosition();
+                const path = activeFilePathRef.current;
+                if (!position || !path) return;
+                onPresenceCursorChange({
+                  line: position.lineNumber,
+                  column: position.column,
+                  path,
+                });
+              };
+
+              editor.onDidFocusEditorText(() => {
+                onFocus();
+                emitCursorPresence();
+              });
+              editor.onDidChangeCursorPosition(() => {
+                emitCursorPresence();
+              });
             }}
             options={{
+              readOnly: roomReadOnly,
+              domReadOnly: roomReadOnly,
               fontSize,
               minimap: { enabled: minimap },
               scrollBeyondLastLine: false,
@@ -184,7 +244,8 @@ const EditorPane: React.FC<{
             </p>
             <button
               onClick={createExampleFile}
-              className="inline-flex items-center gap-2 h-9 px-4 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-bold uppercase tracking-wider transition-colors"
+              disabled={roomReadOnly}
+              className="inline-flex items-center gap-2 h-9 px-4 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-bold uppercase tracking-wider transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <Plus size={13} />
               New Example File
@@ -196,7 +257,10 @@ const EditorPane: React.FC<{
   );
 };
 
-export const EditorContainer: React.FC = () => {
+export const EditorContainer: React.FC<{
+  onPresenceCursorChange?: (cursor: EditorPresenceCursor) => void;
+  canEditInRoom?: boolean;
+}> = ({ onPresenceCursorChange, canEditInRoom = true }) => {
   const { activeFileId, secondaryFileId, isSplit, activePane, setActivePane, toggleSplit } = useFileSystem();
   const { theme } = useEditor();
   const isDark = theme === 'vs-dark';
@@ -221,6 +285,8 @@ export const EditorContainer: React.FC = () => {
               fileId={activeFileId} 
               isActivePane={activePane === 'primary'} 
               onFocus={() => setActivePane('primary')}
+              onPresenceCursorChange={onPresenceCursorChange}
+              canEditInRoom={canEditInRoom}
             />
           </Panel>
           <Separator className="resize-handle-horizontal" />
@@ -229,6 +295,8 @@ export const EditorContainer: React.FC = () => {
               fileId={secondaryFileId || activeFileId} // Default to same file if null
               isActivePane={activePane === 'secondary'} 
               onFocus={() => setActivePane('secondary')}
+              onPresenceCursorChange={onPresenceCursorChange}
+              canEditInRoom={canEditInRoom}
             />
           </Panel>
         </Group>
@@ -237,6 +305,8 @@ export const EditorContainer: React.FC = () => {
           fileId={activeFileId} 
           isActivePane={true} 
           onFocus={() => setActivePane('primary')}
+          onPresenceCursorChange={onPresenceCursorChange}
+          canEditInRoom={canEditInRoom}
         />
       )}
     </div>
