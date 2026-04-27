@@ -22,7 +22,10 @@ const checks = [
   },
   {
     name: 'Main layout mounts output console',
-    ok: () => readFileSync(resolve(root, 'src/components/Layout/MainLayout.tsx'), 'utf8').includes('<ConsoleContainer'),
+    ok: () => {
+      const source = readFileSync(resolve(root, 'src/components/Layout/MainLayout.tsx'), 'utf8');
+      return source.includes('<ConsoleContainer') || source.includes('<LazyConsoleContainer');
+    },
   },
   {
     name: 'Collaboration uses room chat send API',

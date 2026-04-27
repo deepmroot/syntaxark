@@ -12,6 +12,8 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks(id) {
+          if (id.includes('/src/runner/') || id.includes('\\src\\runner\\')) return 'runtime-runners'
+          if (id.includes('/src/components/Editor/') || id.includes('\\src\\components\\Editor\\')) return 'feature-editor'
           if (!id.includes('node_modules')) return
           if (id.includes('@monaco-editor') || id.includes('monaco-editor')) return 'vendor-monaco'
           if (id.includes('yjs') || id.includes('y-monaco') || id.includes('y-webrtc') || id.includes('lib0')) return 'vendor-collab'

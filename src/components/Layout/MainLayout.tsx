@@ -1,12 +1,9 @@
 import React, { Suspense, lazy, useState, useEffect, useRef } from 'react';
 import { Panel, Group, Separator, type PanelImperativeHandle } from 'react-resizable-panels';
 import { Sidebar } from '../Explorer/Sidebar';
-import { EditorContainer } from '../Editor/EditorContainer';
-import { ConsoleContainer } from '../Console/ConsoleContainer';
 import { useEditor } from '../../store/useEditor';
 import { Play, Square, Trophy, CheckCircle2, Files, Settings as SettingsIcon, Search as SearchIcon, Terminal as TerminalIcon, Sun, Moon, PenTool, Keyboard, Download, Share2, Copy, Mail, Link2, Minimize2, Users2, Globe, UserCircle, ArrowLeft } from 'lucide-react';
 import { createZipBlob } from '../../utils/zip';
-import { runner } from '../../runner/Runner';
 import { useFileSystem } from '../../store/useFileSystem';
 import { useCollabSession } from '../../store/useCollabSession';
 import { getNodePath } from '../../collab/core/path';
@@ -37,9 +34,18 @@ const LazySearch = lazy(() => import('../Explorer/Search').then((m) => ({ defaul
 const LazySettings = lazy(() => import('../Explorer/Settings').then((m) => ({ default: m.Settings })));
 const LazyPreviewPanel = lazy(() => import('./PreviewPanel').then((m) => ({ default: m.PreviewPanel })));
 const LazyDrawingCanvas = lazy(() => import('../Drawing/DrawingCanvas').then((m) => ({ default: m.DrawingCanvas })));
+const LazyEditorContainer = lazy(() => import('../Editor/EditorContainer').then((m) => ({ default: m.EditorContainer })));
+const LazyConsoleContainer = lazy(() => import('../Console/ConsoleContainer').then((m) => ({ default: m.ConsoleContainer })));
 
 const LazyPanelFallback: React.FC<{ label?: string }> = ({ label = 'Loading…' }) => (
   <div className="h-full w-full flex items-center justify-center text-xs text-gray-500">{label}</div>
+);
+
+const EditorShellFallback: React.FC = () => (
+  <div className="h-full w-full flex flex-col bg-[#1e1e1e] text-gray-500">
+    <div className="h-9 shrink-0 border-b border-white/10 bg-[#252526]" />
+    <div className="flex-1 flex items-center justify-center text-xs">Loading editor…</div>
+  </div>
 );
 
 export const MainLayout: React.FC = () => {
@@ -328,6 +334,16 @@ export const MainLayout: React.FC = () => {
     );
   };
 
+  const loadRunner = async () => {
+    const mod = await import('../../runner/Runner');
+    return mod.runner;
+  };
+
+  const stopExecution = async () => {
+    const activeRunner = await loadRunner();
+    activeRunner.stop();
+  };
+
   const handleRun = async () => {
     if (!activeFileId) return;
     clearLogs();
@@ -338,16 +354,19 @@ export const MainLayout: React.FC = () => {
     const files: Record<string, string> = {};
     Object.values(nodes).forEach(node => { if (node.type === 'file') files[node.name] = node.content || ''; });
     const activeFile = nodes[activeFileId];
-    
-    const result = await runner.run(
-      files, 
-      activeFile.name, 
-      (type, content) => addLog(normalizeLogType(type), content),
-      (code) => setPreviewCode(code)
-    );
-    
-    setExecutionTime(result.duration);
-    setExecuting(false);
+
+    try {
+      const activeRunner = await loadRunner();
+      const result = await activeRunner.run(
+        files,
+        activeFile.name,
+        (type, content) => addLog(normalizeLogType(type), content),
+        (code) => setPreviewCode(code),
+      );
+      setExecutionTime(result.duration);
+    } finally {
+      setExecuting(false);
+    }
   };
 
   const handleRunTests = async () => {
@@ -361,15 +380,19 @@ export const MainLayout: React.FC = () => {
     setExecuting(true);
     const files: Record<string, string> = {};
     Object.values(nodes).forEach(node => { if (node.type === 'file') files[node.name] = node.content || ''; });
-    const result = await runner.runTests(
-      files,
-      activeNode.name,
-      activeChallenge.functionName,
-      activeChallenge.testCases,
-      (type: string, content: unknown[]) => { addLog(normalizeLogType(type), content); }
-    );
-    setTestResults(result.results);
-    setExecuting(false);
+    try {
+      const activeRunner = await loadRunner();
+      const result = await activeRunner.runTests(
+        files,
+        activeNode.name,
+        activeChallenge.functionName,
+        activeChallenge.testCases,
+        (type: string, content: unknown[]) => { addLog(normalizeLogType(type), content); },
+      );
+      setTestResults(result.results);
+    } finally {
+      setExecuting(false);
+    }
   };
 
   /* ── download helpers ── */
@@ -610,7 +633,7 @@ export const MainLayout: React.FC = () => {
           </button>
             )}
             <button 
-              onClick={isExecuting ? () => runner.stop() : handleRun}
+              onClick={isExecuting ? () => { void stopExecution(); } : handleRun}
               className={`flex items-center gap-2 px-3 py-1 rounded text-[11px] font-medium transition-colors ${
                 isExecuting ? 'bg-red-600 hover:bg-red-700' : 'bg-green-600 hover:bg-green-700'
               } text-white`}
@@ -798,7 +821,11 @@ export const MainLayout: React.FC = () => {
                 <Group orientation="vertical">
                    <Panel id="editor-top" defaultSize={70} minSize={30}>
                      <div className="h-full flex flex-col">
-                       <div className="flex-1 min-h-0"><EditorContainer onPresenceCursorChange={reportEditorCursor} canEditInRoom={collabCanEdit} /></div>
+                       <div className="flex-1 min-h-0">
+                         <Suspense fallback={<EditorShellFallback />}>
+                           <LazyEditorContainer onPresenceCursorChange={reportEditorCursor} canEditInRoom={collabCanEdit} />
+                         </Suspense>
+                       </div>
                        {!showConsole && (
                          <button
                            onClick={openConsolePanel}
@@ -820,7 +847,9 @@ export const MainLayout: React.FC = () => {
                      collapsedSize={0}
                      onResize={handleConsoleResize}
                    >
-                     <ConsoleContainer onToggle={() => consolePanelRef.current?.collapse()} />
+                     <Suspense fallback={<LazyPanelFallback label="Loading console…" />}>
+                       <LazyConsoleContainer onToggle={() => consolePanelRef.current?.collapse()} />
+                     </Suspense>
                    </Panel>
                 </Group>
               </Panel>
@@ -857,7 +886,11 @@ export const MainLayout: React.FC = () => {
                 <Group orientation="vertical">
                    <Panel id="editor-top-no-challenge" defaultSize={70} minSize={30}>
                      <div className="h-full flex flex-col">
-                       <div className="flex-1 min-h-0"><EditorContainer onPresenceCursorChange={reportEditorCursor} canEditInRoom={collabCanEdit} /></div>
+                       <div className="flex-1 min-h-0">
+                         <Suspense fallback={<EditorShellFallback />}>
+                           <LazyEditorContainer onPresenceCursorChange={reportEditorCursor} canEditInRoom={collabCanEdit} />
+                         </Suspense>
+                       </div>
                        {!showConsole && (
                          <button
                            onClick={openConsolePanel}
@@ -879,7 +912,9 @@ export const MainLayout: React.FC = () => {
                      collapsedSize={0}
                      onResize={handleConsoleResize}
                    >
-                     <ConsoleContainer onToggle={() => consolePanelRef.current?.collapse()} />
+                     <Suspense fallback={<LazyPanelFallback label="Loading console…" />}>
+                       <LazyConsoleContainer onToggle={() => consolePanelRef.current?.collapse()} />
+                     </Suspense>
                    </Panel>
                 </Group>
               </Panel>
